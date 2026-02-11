@@ -27,10 +27,8 @@ uv.lock
 .python-version
 
 # Project specific
-data/*
-!data/.gitkeep
+# data/*
 results/*
-!results/.gitkeep
 
 # Jupyter
 .ipynb_checkpoints/
