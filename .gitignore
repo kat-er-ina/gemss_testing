@@ -29,6 +29,7 @@ uv.lock
 # Project specific
 # data/*
 results/*
+app/results/*
 
 # Jupyter
 .ipynb_checkpoints/
