@@ -38,6 +38,9 @@ def get_benchmark_data(
         sparsity=sparsity,
         noise_data_std=noise_std,
         random_seed=seed,
+        nan_ratio=nan_ratio,
+        binarize=binarize,
+        binary_response_ratio=binary_ratio,
         print_data_overview=False,
     )
 

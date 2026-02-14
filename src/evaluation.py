@@ -2,7 +2,9 @@
 
 
 def calculate_metrics(
-    predicted_solutions_dict, true_support_indices: set, p_total: int
+    predicted_solutions_dict,
+    true_support_indices: set,
+    p_total: int,
 ):
     """
     Compare the UNION of found features against the UNION of true features.
@@ -34,6 +36,11 @@ def calculate_metrics(
     precision = (
         n_correct / n_pred if n_pred > 0 else 1.0
     )  # Default to 1 if empty (conservative)
+    f1score = (
+        2 * precision * recall / (precision + recall)
+        if (precision + recall) > 0
+        else 0.0
+    )
 
     # Success Index (SI) = (p * Correct) / (True^2)
     si = (p_total * n_correct) / (p_generating**2) if p_generating > 0 else 0.0
@@ -48,6 +55,7 @@ def calculate_metrics(
     return {
         "Recall": recall,
         "Precision": precision,
+        "F1_Score": f1score,
         "Success_Index": si,
         "Adjusted_SI": asi,
         "Jaccard": jaccard,

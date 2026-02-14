@@ -30,6 +30,7 @@ uv.lock
 # data/*
 results/*
 app/results/*
+*.html
 
 # Jupyter
 .ipynb_checkpoints/

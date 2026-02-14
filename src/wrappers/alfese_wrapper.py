@@ -8,18 +8,31 @@ import numpy as np
 
 class AlfeseWrapper(ModelWrapper):
     def __init__(
-        self, n_solutions=3, task="regression", selector_type="mrmr", **kwargs
+        self,
+        n_solutions=3,
+        task="regression",
+        selector_type="mrmr",
+        tau=0.5,
+        k=None,
+        n_iter=None,
+        **kwargs,
     ):
         """
         Args:
             n_solutions: Number of alternative solutions to find
             task: 'regression' or 'classification'
-            selector_type: Type of ALFESE selector ('mrmr', 'mi', 'fcbf', etc.)
-            **kwargs: Extra args for ALFESE selector (e.g., 'tau', 'k')
+            selector_type: Type of ALFESE selector ('mrmr', 'mi', 'fcbf')
+            tau: Diversity parameter (0-1, higher means more diverse)
+            k: Number of features to select per solution (defaults to 20% of features)
+            n_iter: Maximum number of iterations (None uses package default)
+            **kwargs: Extra args for ALFESE selector
         """
         self.n_solutions = n_solutions
         self.task = task
         self.selector_type = selector_type.lower()
+        self.tau = tau
+        self.k = k
+        self.n_iter = n_iter
         self.kwargs = kwargs
 
     def fit(self, X, y):
@@ -57,8 +70,14 @@ class AlfeseWrapper(ModelWrapper):
         selector = selector_class()
 
         # Set training and test data using proper ALFESE API
-        # Use 80-20 split for simplicity
-        split_idx = int(0.8 * len(X_df))
+        # Use 80-20 split, but ensure minimum test set size for small datasets
+        n_samples = len(X_df)
+        if n_samples < 30:
+            # For very small datasets, use larger training set
+            split_idx = max(int(0.9 * n_samples), n_samples - 5)
+        else:
+            split_idx = int(0.8 * n_samples)
+
         X_train = X_df.iloc[:split_idx]
         X_test = X_df.iloc[split_idx:]
         y_train = y_series.iloc[:split_idx]
@@ -68,18 +87,30 @@ class AlfeseWrapper(ModelWrapper):
         selector.set_data(X_train, X_test, y_train, y_test)
 
         # Determine number of features to select (k)
-        # Default to 20% of features or user-provided value
-        k = self.kwargs.get("k", max(1, int(0.2 * X_df.shape[1])))
+        # Use provided k, or default to 20% of features
+        if self.k is not None:
+            k = self.k
+        else:
+            k = self.kwargs.get("k", max(1, int(0.2 * X_df.shape[1])))
 
         # Diversity parameter tau (0-1, higher means more diverse)
-        tau = self.kwargs.get("tau", 0.5)
+        tau = self.tau
 
         try:
             # Search for alternative solutions
             # Returns a DataFrame with columns: ['selected_idxs', 'train_objective', 'test_objective', ...]
-            result_df = selector.search_simultaneously(
-                k=k, num_alternatives=self.n_solutions, tau=tau, objective_agg="sum"
-            )
+            # Note: ALFESE returns 1 primary + num_alternatives, so we need n_solutions - 1
+            search_kwargs = {
+                "k": k,
+                "num_alternatives": self.n_solutions - 1,
+                "tau": tau,
+                "objective_agg": "sum",
+            }
+            # Only pass max_iter if explicitly specified, otherwise use package default
+            if self.n_iter is not None:
+                search_kwargs["max_iter"] = self.n_iter
+
+            result_df = selector.search_simultaneously(**search_kwargs)
 
             # Parse results into standardized format
             # ALFESE returns one row per solution with 'selected_idxs' column containing lists
@@ -87,7 +118,16 @@ class AlfeseWrapper(ModelWrapper):
 
             if "selected_idxs" in result_df.columns:
                 # Each row is a solution, selected_idxs contains list of feature indices
-                for i in range(min(self.n_solutions, len(result_df))):
+                # ALFESE returns 1 primary + num_alternatives = n_solutions total
+                num_solutions_returned = len(result_df)
+
+                # Note: ALFESE may return fewer solutions if it cannot find enough diverse ones
+                if num_solutions_returned < self.n_solutions:
+                    print(
+                        f"    INFO: ALFESE returned {num_solutions_returned}/{self.n_solutions} solutions (may indicate difficulty finding diverse solutions)"
+                    )
+
+                for i in range(num_solutions_returned):
                     selected_indices = result_df.iloc[i]["selected_idxs"]
                     # Convert to list if needed
                     if not isinstance(selected_indices, list):
