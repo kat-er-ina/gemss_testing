@@ -65,3 +65,28 @@ def calculate_metrics(
         "n_missed": n_missed,
         "n_extra": n_extra,
     }
+
+
+def get_empty_metrics():
+    """
+    Return the same metric structure as calculate_metrics but with NaN values.
+
+    Useful for cases where metrics cannot be calculated (e.g., failed experiments).
+
+    Returns:
+        dict: metrics dictionary with NaN values
+    """
+    nan = float("nan")
+    return {
+        "Recall": nan,
+        "Precision": nan,
+        "F1_Score": nan,
+        "Success_Index": nan,
+        "Adjusted_SI": nan,
+        "Jaccard": nan,
+        "Solutions_Found": nan,
+        "Total_Features_Selected": nan,
+        "n_correct": nan,
+        "n_missed": nan,
+        "n_extra": nan,
+    }

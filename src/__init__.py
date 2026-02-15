@@ -9,9 +9,10 @@ Modules:
 """
 
 from .data_factory import get_benchmark_data
-from .evaluation import calculate_metrics
+from .evaluation import calculate_metrics, get_empty_metrics
 
 __all__ = [
     "get_benchmark_data",
     "calculate_metrics",
+    "get_empty_metrics",
 ]
