@@ -1,0 +1,101 @@
+https://archive.ics.uci.edu/dataset/408/gastrointestinal+lesions+in+regular+colonoscopy
+
+@misc{gastrointestinal_lesions_in_regular_colonoscopy_408,
+  author       = {Mesejo, Pablo and Pizarro, Daniel},
+  title        = {{Gastrointestinal Lesions in Regular Colonoscopy}},
+  year         = {2016},
+  howpublished = {UCI Machine Learning Repository},
+  note         = {{DOI}: https://doi.org/10.24432/C5V02D}
+}
+
+
+
+This dataset contains features extracted from colonoscopy videos used to detect gastrointestinal lesions. It contains 76 lesions: 15 serrated adenomas, 21 hyperplastic lesions and 40 adenoma.
+
+Dataset Characteristics
+Multivariate
+
+Subject Area
+Computer Science
+
+Associated Tasks
+Classification
+
+Feature Type
+Real
+
+# Instances
+76
+
+# Features
+698
+
+
+
+Dataset Information
+Additional Information
+
+This dataset contains the features extracted from a database of colonoscopic videos showing gastrointestinal lesions. It also contains the ground truth collected from both expert image inspection and histology (in an xlsx file). There are features vectors for 76 lesions, and there are 3 types of lesion: hyperplasic, adenoma and serrated adenoma. It is possible to consider this classification problem as a binary one by combining adenoma and serrated adenoma in the same class. According to this, hyperplasic lesions would belong to the class 'benign' while the other two types of gastrointestinal lesions would go to the 'malignant' class. 
+
+The first line/row of the dataset corresponds to the lesion name (text label). Every lesion appears twice because it has been recorded using two types of lights: white light (WL) and narrow band imaging (NBI). The second line/row represents the type of lesion (3 for adenoma, 1 for hyperplasic, and 2 for serrated). And, finally, the third line/row is the type of light used (1 for WL and 2 for NBI). All other rows are the raw features (without any kind of preprocessing):
+422 2D TEXTURAL FEATURES
+- First 166 features: AHT: Autocorrelation Homogeneous Texture (Invariant Gabor Texture)
+- Next 256: Rotational Invariant LBP
+76 2D COLOR FEATURES
+- 16 Color Naming
+- 13 Discriminative Color
+- 7 Hue
+- 7 Opponent
+- 33 color gray-level co-occurrence matrix
+200 3D SHAPE FEATURES
+- 100 shapeDNA
+- 100 KPCA
+
+The main objective of this dataset is to study how good computers can be at diagnosing gastrointestinal lesions from regular colonoscopic videos. In order to compare the performance of machine learning methods with the one offered by humans, we provide the file ground_truth.xlsx that includes the ground truth after histopathology and the opinion of 7 clinicians (4 experts and 3 beginners). An automatic tissue classification approach could save clinician's time by avoiding chromoendoscopy, a time-consuming staining procedure using indigo carmine, as well as could help to assess the severity of individual lesions in patients with many polyps, so that the gastroenterologist would directly focus on those requiring polypectomy. A possible way of proceeding with the classification is to concatenate the information from the two types of light for each lesion, i.e. create a single vector of 1396 elements per lesion.
+
+The technical goal is to maximize accuracy while minimizing false positives (lesions that do not need resection but that are classified as if they do) and false negatives (lesions that do need resection but that are classified as if they do not need it). In particular, we are specially interested on maximizing accuracy while reducing false negatives, i.e. minimizing the number of adenoma and serrated adenoma that are classified as hyperplasic. The opposite case is not that serious: the resection of a hyperplasic polyp considering it as an adenoma or serrated adenoma. Another interesting experiment would consist on compare the performance of the best machine learning method we can get with the one provided by human operators (experts and beginners).
+
+The best results obtained so far, in the binary case, using leave-one-out and Random Forest with 1000 trees (using color+texture+3D with NBI), corresponded to an accuracy of ~89,5%, sensitivity ~94,5% and specificity ~76% (considering as positive condition the resection). This is the best confusion matrix found so far:
+                     Classified as
+		Resection	No-Resection
+Resection       52			3
+No-Resection	5			16
+
+The best results obtained in the multi-class case, using leave-one-out and Random Subspace of SVMs (color+texture+3D using WL), were as follows:
+                   Classified as
+	Hyp.	       Ser.     	Ade.
+Hyp.	18		0		3
+Ser.	2		9		4
+Ade.	7		4		29
+
+Overall Accuracy : 0.7368 
+Acc Hyp.  	0.84
+Acc Ser.	0.87
+Acc Ade.	0.76
+Sen Hyp.	0.86	
+Sen Ser.	0.6
+Sen Ade.	0.725
+Spe Hyp.	0.84
+Spe Ser.	0.93
+Spe Ade.	0.81
+
+Has Missing Values?
+
+No
+
+Variable Information
+
+First 422 attributes: 2D TEXTURAL FEATURES
+- 166 features: AHT: Autocorrelation Homogeneous Texture (Invariant Gabor Texture)
+- Next 256: Rotational Invariant LBP
+
+Next 76 attributes: 2D COLOR FEATURES
+- 16 Color Naming
+- 13 Discriminative Color
+- 7 Hue
+- 7 Opponent
+- 33 color gray-level co-occurrence matrix
+
+Last 200 attributes: 3D SHAPE FEATURES
+- 100 shapeDNA
+- 100 KPCA
