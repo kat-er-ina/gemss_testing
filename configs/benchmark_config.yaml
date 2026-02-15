@@ -41,23 +41,20 @@ experiments:
         student_scale: 1.0
         weight_slab: 0.9
         weight_spike: 0.1
-      ALFESE_mrmr_tau0.5:
-        selector_type: "mrmr"
-        tau: 0.5
       ALFESE_mrmr_tau1.0:
         selector_type: "mrmr"
         tau: 1.0
-      ALFESE_mi_tau0.5:
-        selector_type: "mi"
-        tau: 0.5
       ALFESE_mi_tau1.0:
         selector_type: "mi"
         tau: 1.0
-      ALFESE_fcbf_tau0.5:
-        selector_type: "fcbf"
-        tau: 0.5
       ALFESE_fcbf_tau1.0:
         selector_type: "fcbf"
+        tau: 1.0
+      ALFESE_greedy_tau1.0:
+        selector_type: "greedy"
+        tau: 1.0
+      ALFESE_importance_tau1.0:
+        selector_type: "importance"
         tau: 1.0
 
   - id: "tier1_50x100_s5"
@@ -89,23 +86,20 @@ experiments:
         student_scale: 1.0
         weight_slab: 0.9
         weight_spike: 0.1
-      ALFESE_mrmr_tau0.5:
-        selector_type: "mrmr"
-        tau: 0.5
       ALFESE_mrmr_tau1.0:
         selector_type: "mrmr"
         tau: 1.0
-      ALFESE_mi_tau0.5:
-        selector_type: "mi"
-        tau: 0.5
       ALFESE_mi_tau1.0:
         selector_type: "mi"
         tau: 1.0
-      ALFESE_fcbf_tau0.5:
-        selector_type: "fcbf"
-        tau: 0.5
       ALFESE_fcbf_tau1.0:
         selector_type: "fcbf"
+        tau: 1.0
+      ALFESE_greedy_tau1.0:
+        selector_type: "greedy"
+        tau: 1.0
+      ALFESE_importance_tau1.0:
+        selector_type: "importance"
         tau: 1.0
 
   - id: "tier1_50x200_s5"
@@ -137,23 +131,20 @@ experiments:
         student_scale: 1.0
         weight_slab: 0.9
         weight_spike: 0.1
-      ALFESE_mrmr_tau0.5:
-        selector_type: "mrmr"
-        tau: 0.5
       ALFESE_mrmr_tau1.0:
         selector_type: "mrmr"
         tau: 1.0
-      ALFESE_mi_tau0.5:
-        selector_type: "mi"
-        tau: 0.5
       ALFESE_mi_tau1.0:
         selector_type: "mi"
         tau: 1.0
-      ALFESE_fcbf_tau0.5:
-        selector_type: "fcbf"
-        tau: 0.5
       ALFESE_fcbf_tau1.0:
         selector_type: "fcbf"
+        tau: 1.0
+      ALFESE_greedy_tau1.0:
+        selector_type: "greedy"
+        tau: 1.0
+      ALFESE_importance_tau1.0:
+        selector_type: "importance"
         tau: 1.0
 
   - id: "tier1_50x500_s5"
@@ -185,23 +176,20 @@ experiments:
         student_scale: 1.0
         weight_slab: 0.9
         weight_spike: 0.1
-      ALFESE_mrmr_tau0.5:
-        selector_type: "mrmr"
-        tau: 0.5
       ALFESE_mrmr_tau1.0:
         selector_type: "mrmr"
         tau: 1.0
-      ALFESE_mi_tau0.5:
-        selector_type: "mi"
-        tau: 0.5
       ALFESE_mi_tau1.0:
         selector_type: "mi"
         tau: 1.0
-      ALFESE_fcbf_tau0.5:
-        selector_type: "fcbf"
-        tau: 0.5
       ALFESE_fcbf_tau1.0:
         selector_type: "fcbf"
+        tau: 1.0
+      ALFESE_greedy_tau1.0:
+        selector_type: "greedy"
+        tau: 1.0
+      ALFESE_importance_tau1.0:
+        selector_type: "importance"
         tau: 1.0
 
   - id: "tier1_100x500_s5"
@@ -233,23 +221,20 @@ experiments:
         student_scale: 1.0
         weight_slab: 0.9
         weight_spike: 0.1
-      ALFESE_mrmr_tau0.5:
-        selector_type: "mrmr"
-        tau: 0.5
       ALFESE_mrmr_tau1.0:
         selector_type: "mrmr"
         tau: 1.0
-      ALFESE_mi_tau0.5:
-        selector_type: "mi"
-        tau: 0.5
       ALFESE_mi_tau1.0:
         selector_type: "mi"
         tau: 1.0
-      ALFESE_fcbf_tau0.5:
-        selector_type: "fcbf"
-        tau: 0.5
       ALFESE_fcbf_tau1.0:
         selector_type: "fcbf"
+        tau: 1.0
+      ALFESE_greedy_tau1.0:
+        selector_type: "greedy"
+        tau: 1.0
+      ALFESE_importance_tau1.0:
+        selector_type: "importance"
         tau: 1.0
 
   # ========================================
@@ -286,23 +271,20 @@ experiments:
         student_scale: 1.0
         weight_slab: 0.9
         weight_spike: 0.1
-      ALFESE_mrmr_tau0.5:
-        selector_type: "mrmr"
-        tau: 0.5
       ALFESE_mrmr_tau1.0:
         selector_type: "mrmr"
         tau: 1.0
-      ALFESE_mi_tau0.5:
-        selector_type: "mi"
-        tau: 0.5
       ALFESE_mi_tau1.0:
         selector_type: "mi"
         tau: 1.0
-      ALFESE_fcbf_tau0.5:
-        selector_type: "fcbf"
-        tau: 0.5
       ALFESE_fcbf_tau1.0:
         selector_type: "fcbf"
+        tau: 1.0
+      ALFESE_greedy_tau1.0:
+        selector_type: "greedy"
+        tau: 1.0
+      ALFESE_importance_tau1.0:
+        selector_type: "importance"
         tau: 1.0
 
   - id: "tier2_100x1000_s5"
@@ -334,23 +316,20 @@ experiments:
         student_scale: 1.0
         weight_slab: 0.9
         weight_spike: 0.1
-      ALFESE_mrmr_tau0.5:
-        selector_type: "mrmr"
-        tau: 0.5
       ALFESE_mrmr_tau1.0:
         selector_type: "mrmr"
         tau: 1.0
-      ALFESE_mi_tau0.5:
-        selector_type: "mi"
-        tau: 0.5
       ALFESE_mi_tau1.0:
         selector_type: "mi"
         tau: 1.0
-      ALFESE_fcbf_tau0.5:
-        selector_type: "fcbf"
-        tau: 0.5
       ALFESE_fcbf_tau1.0:
         selector_type: "fcbf"
+        tau: 1.0
+      ALFESE_greedy_tau1.0:
+        selector_type: "greedy"
+        tau: 1.0
+      ALFESE_importance_tau1.0:
+        selector_type: "importance"
         tau: 1.0
 
   - id: "tier2_50x2000_s5"
@@ -382,23 +361,20 @@ experiments:
         student_scale: 1.0
         weight_slab: 0.9
         weight_spike: 0.1
-      ALFESE_mrmr_tau0.5:
-        selector_type: "mrmr"
-        tau: 0.5
       ALFESE_mrmr_tau1.0:
         selector_type: "mrmr"
         tau: 1.0
-      ALFESE_mi_tau0.5:
-        selector_type: "mi"
-        tau: 0.5
       ALFESE_mi_tau1.0:
         selector_type: "mi"
         tau: 1.0
-      ALFESE_fcbf_tau0.5:
-        selector_type: "fcbf"
-        tau: 0.5
       ALFESE_fcbf_tau1.0:
         selector_type: "fcbf"
+        tau: 1.0
+      ALFESE_greedy_tau1.0:
+        selector_type: "greedy"
+        tau: 1.0
+      ALFESE_importance_tau1.0:
+        selector_type: "importance"
         tau: 1.0
 
   - id: "tier2_100x2000_s5"
@@ -430,23 +406,20 @@ experiments:
         student_scale: 1.0
         weight_slab: 0.9
         weight_spike: 0.1
-      ALFESE_mrmr_tau0.5:
-        selector_type: "mrmr"
-        tau: 0.5
       ALFESE_mrmr_tau1.0:
         selector_type: "mrmr"
         tau: 1.0
-      ALFESE_mi_tau0.5:
-        selector_type: "mi"
-        tau: 0.5
       ALFESE_mi_tau1.0:
         selector_type: "mi"
         tau: 1.0
-      ALFESE_fcbf_tau0.5:
-        selector_type: "fcbf"
-        tau: 0.5
       ALFESE_fcbf_tau1.0:
         selector_type: "fcbf"
+        tau: 1.0
+      ALFESE_greedy_tau1.0:
+        selector_type: "greedy"
+        tau: 1.0
+      ALFESE_importance_tau1.0:
+        selector_type: "importance"
         tau: 1.0
 
   - id: "tier2_50x5000_s5"
@@ -478,23 +451,20 @@ experiments:
         student_scale: 1.0
         weight_slab: 0.9
         weight_spike: 0.1
-      ALFESE_mrmr_tau0.5:
-        selector_type: "mrmr"
-        tau: 0.5
       ALFESE_mrmr_tau1.0:
         selector_type: "mrmr"
         tau: 1.0
-      ALFESE_mi_tau0.5:
-        selector_type: "mi"
-        tau: 0.5
       ALFESE_mi_tau1.0:
         selector_type: "mi"
         tau: 1.0
-      ALFESE_fcbf_tau0.5:
-        selector_type: "fcbf"
-        tau: 0.5
       ALFESE_fcbf_tau1.0:
         selector_type: "fcbf"
+        tau: 1.0
+      ALFESE_greedy_tau1.0:
+        selector_type: "greedy"
+        tau: 1.0
+      ALFESE_importance_tau1.0:
+        selector_type: "importance"
         tau: 1.0
 
   - id: "tier2_100x5000_s5"
@@ -526,23 +496,20 @@ experiments:
         student_scale: 1.0
         weight_slab: 0.9
         weight_spike: 0.1
-      ALFESE_mrmr_tau0.5:
-        selector_type: "mrmr"
-        tau: 0.5
       ALFESE_mrmr_tau1.0:
         selector_type: "mrmr"
         tau: 1.0
-      ALFESE_mi_tau0.5:
-        selector_type: "mi"
-        tau: 0.5
       ALFESE_mi_tau1.0:
         selector_type: "mi"
         tau: 1.0
-      ALFESE_fcbf_tau0.5:
-        selector_type: "fcbf"
-        tau: 0.5
       ALFESE_fcbf_tau1.0:
         selector_type: "fcbf"
+        tau: 1.0
+      ALFESE_greedy_tau1.0:
+        selector_type: "greedy"
+        tau: 1.0
+      ALFESE_importance_tau1.0:
+        selector_type: "importance"
         tau: 1.0
 
   # ========================================
@@ -579,23 +546,20 @@ experiments:
         student_scale: 1.0
         weight_slab: 0.9
         weight_spike: 0.1
-      ALFESE_mrmr_tau0.5:
-        selector_type: "mrmr"
-        tau: 0.5
       ALFESE_mrmr_tau1.0:
         selector_type: "mrmr"
         tau: 1.0
-      ALFESE_mi_tau0.5:
-        selector_type: "mi"
-        tau: 0.5
       ALFESE_mi_tau1.0:
         selector_type: "mi"
         tau: 1.0
-      ALFESE_fcbf_tau0.5:
-        selector_type: "fcbf"
-        tau: 0.5
       ALFESE_fcbf_tau1.0:
         selector_type: "fcbf"
+        tau: 1.0
+      ALFESE_greedy_tau1.0:
+        selector_type: "greedy"
+        tau: 1.0
+      ALFESE_importance_tau1.0:
+        selector_type: "importance"
         tau: 1.0
 
   - id: "tier4_100x200_nan0.2"
@@ -627,23 +591,20 @@ experiments:
         student_scale: 1.0
         weight_slab: 0.9
         weight_spike: 0.1
-      ALFESE_mrmr_tau0.5:
-        selector_type: "mrmr"
-        tau: 0.5
       ALFESE_mrmr_tau1.0:
         selector_type: "mrmr"
         tau: 1.0
-      ALFESE_mi_tau0.5:
-        selector_type: "mi"
-        tau: 0.5
       ALFESE_mi_tau1.0:
         selector_type: "mi"
         tau: 1.0
-      ALFESE_fcbf_tau0.5:
-        selector_type: "fcbf"
-        tau: 0.5
       ALFESE_fcbf_tau1.0:
         selector_type: "fcbf"
+        tau: 1.0
+      ALFESE_greedy_tau1.0:
+        selector_type: "greedy"
+        tau: 1.0
+      ALFESE_importance_tau1.0:
+        selector_type: "importance"
         tau: 1.0
 
   - id: "tier4_100x200_noise0.5_nan0.2"
@@ -675,23 +636,20 @@ experiments:
         student_scale: 1.0
         weight_slab: 0.9
         weight_spike: 0.1
-      ALFESE_mrmr_tau0.5:
-        selector_type: "mrmr"
-        tau: 0.5
       ALFESE_mrmr_tau1.0:
         selector_type: "mrmr"
         tau: 1.0
-      ALFESE_mi_tau0.5:
-        selector_type: "mi"
-        tau: 0.5
       ALFESE_mi_tau1.0:
         selector_type: "mi"
         tau: 1.0
-      ALFESE_fcbf_tau0.5:
-        selector_type: "fcbf"
-        tau: 0.5
       ALFESE_fcbf_tau1.0:
         selector_type: "fcbf"
+        tau: 1.0
+      ALFESE_greedy_tau1.0:
+        selector_type: "greedy"
+        tau: 1.0
+      ALFESE_importance_tau1.0:
+        selector_type: "importance"
         tau: 1.0
 
   # ========================================
@@ -728,23 +686,20 @@ experiments:
         student_scale: 1.0
         weight_slab: 0.9
         weight_spike: 0.1
-      ALFESE_mrmr_tau0.5:
-        selector_type: "mrmr"
-        tau: 0.5
       ALFESE_mrmr_tau1.0:
         selector_type: "mrmr"
         tau: 1.0
-      ALFESE_mi_tau0.5:
-        selector_type: "mi"
-        tau: 0.5
       ALFESE_mi_tau1.0:
         selector_type: "mi"
         tau: 1.0
-      ALFESE_fcbf_tau0.5:
-        selector_type: "fcbf"
-        tau: 0.5
       ALFESE_fcbf_tau1.0:
         selector_type: "fcbf"
+        tau: 1.0
+      ALFESE_greedy_tau1.0:
+        selector_type: "greedy"
+        tau: 1.0
+      ALFESE_importance_tau1.0:
+        selector_type: "importance"
         tau: 1.0
 
   - id: "tier7_200x500_imb0.2"
@@ -776,21 +731,18 @@ experiments:
         student_scale: 1.0
         weight_slab: 0.9
         weight_spike: 0.1
-      ALFESE_mrmr_tau0.5:
-        selector_type: "mrmr"
-        tau: 0.5
       ALFESE_mrmr_tau1.0:
         selector_type: "mrmr"
         tau: 1.0
-      ALFESE_mi_tau0.5:
-        selector_type: "mi"
-        tau: 0.5
       ALFESE_mi_tau1.0:
         selector_type: "mi"
         tau: 1.0
-      ALFESE_fcbf_tau0.5:
-        selector_type: "fcbf"
-        tau: 0.5
       ALFESE_fcbf_tau1.0:
         selector_type: "fcbf"
+        tau: 1.0
+      ALFESE_greedy_tau1.0:
+        selector_type: "greedy"
+        tau: 1.0
+      ALFESE_importance_tau1.0:
+        selector_type: "importance"
         tau: 1.0

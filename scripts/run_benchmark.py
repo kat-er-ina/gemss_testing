@@ -14,7 +14,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.data_factory import get_benchmark_data
 from src.wrappers.gemss_wrapper import GEMSSWrapper
 from src.wrappers.alfese_wrapper import AlfeseWrapper
-from src.evaluation import calculate_metrics
+from src.evaluation import calculate_metrics, get_empty_metrics
 
 
 def main():
@@ -42,11 +42,13 @@ def main():
         nargs="+",
         default=[
             "GEMSS",
-            "ALFESE_mrmr_tau1.0",
             "ALFESE_mi_tau1.0",
-            "ALFESE_fcbf_tau1.0",
+            "ALFESE_greedy_tau1.0",
+            "ALFESE_importance_tau1.0",
+            # "ALFESE_mrmr_tau1.0", # extreme run times, esp. for p > 1000
+            # "ALFESE_fcbf_tau1.0", # memory issues for p > 1000, very long run times, esp. for p > 1000
         ],
-        help="List of methods to run (e.g., GEMSS ALFESE_mrmr_tau0.5). Default: GEMSS + all ALFESE variants with tau=1.0",
+        help="List of methods to run (e.g., GEMSS ALFESE_mrmr_tau1.0). Default: GEMSS + a quick ALFESE-MI variants with tau=1.0",
     )
     args = parser.parse_args()
 
@@ -81,6 +83,12 @@ def main():
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     results_log = []
+    # Prepare output directory and file for incremental saving
+    os.makedirs(config["output_dir"], exist_ok=True)
+    output_file = os.path.join(
+        config["output_dir"], f"benchmark_results_{timestamp}.csv"
+    )
+    header_written = False
 
     # Calculate total number of experiment-method combinations for progress tracking
     total_combinations = sum(
@@ -220,21 +228,41 @@ def main():
                     )
                     pbar.update(1)
 
+                    # Save result to CSV immediately (append mode)
+                    df_entry = pd.DataFrame([entry])
+                    if not header_written:
+                        df_entry.to_csv(output_file, mode="w", index=False)
+                        header_written = True
+                    else:
+                        df_entry.to_csv(
+                            output_file, mode="a", index=False, header=False
+                        )
+
                 except Exception as e:
                     pbar.write(f"    {method_name}: FAIL ({str(e)})")
                     pbar.update(1)
-                    results_log.append(
-                        {
-                            "Exp_Number": exp_number,
-                            "Experiment_ID": exp_id,
-                            "Experiment_Description": description,
-                            "Method": method_name,
-                            "Task": task_type,
-                            **ds_params,
-                            "Status": "Failed",
-                            "Error": str(e),
-                        }
-                    )
+                    metrics = get_empty_metrics()
+                    fail_entry = {
+                        "Exp_Number": exp_number,
+                        "Experiment_ID": exp_id,
+                        "Experiment_Description": description,
+                        "Method": method_name,
+                        "Task": task_type,
+                        **ds_params,
+                        **metrics,
+                        "Runtime_Sec": None,
+                        "Status": f"Failed: {str(e)}",
+                    }
+                    results_log.append(fail_entry)
+                    # Save failed result to CSV immediately (append mode)
+                    df_entry = pd.DataFrame([fail_entry])
+                    if not header_written:
+                        df_entry.to_csv(output_file, mode="w", index=False)
+                        header_written = True
+                    else:
+                        df_entry.to_csv(
+                            output_file, mode="a", index=False, header=False
+                        )
 
         except Exception as data_err:
             pbar.write(f"  CRITICAL: Data generation failed: {data_err}")
@@ -242,13 +270,6 @@ def main():
 
     # Close progress bar
     pbar.close()
-
-    # Save Results
-    os.makedirs(config["output_dir"], exist_ok=True)
-    output_file = os.path.join(
-        config["output_dir"], f"benchmark_results_{timestamp}.csv"
-    )
-    pd.DataFrame(results_log).to_csv(output_file, index=False)
 
     print(f"\n✅ Benchmark Complete!")
     print(f"Results saved to: {output_file}")

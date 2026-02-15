@@ -1,4 +1,20 @@
-"""Adapter for ALFESE package."""
+"""Adapter for ALFESE package.
+
+Note:
+------
+alfese.py contains six feature-selection methods as classes:
+
+- FCBFSelector: (adapted version of) FCBF, a multivariate filter method
+- GreedyWrapperSelector: a wrapper method (by default, using a decision tree as prediction model)
+- ManualUnivariateQualitySelector: a univariate filter method where you can enter each feature's utility directly (instead of computing it from a dataset)
+- MISelector: a univariate filter method based on mutual information
+- ModelImportanceSelector: a univariate filter method using feature importances from a prediction model (by default, a decision tree)
+- MRMRSelector: mRMR, a multivariate filter method
+
+The feature-selection method determines the notion of feature-set quality, i.e., the optimization objective.
+
+The ManualUnivariateQualitySelector is not included in this comparison.
+"""
 
 from .base import ModelWrapper
 import alfese
@@ -21,7 +37,7 @@ class AlfeseWrapper(ModelWrapper):
         Args:
             n_solutions: Number of alternative solutions to find
             task: 'regression' or 'classification'
-            selector_type: Type of ALFESE selector ('mrmr', 'mi', 'fcbf')
+            selector_type: Type of ALFESE selector ('mrmr', 'mi', 'fcbf', 'greedy', 'importance')
             tau: Diversity parameter (0-1, higher means more diverse)
             k: Number of features to select per solution (defaults to 20% of features)
             n_iter: Maximum number of iterations (None uses package default)
@@ -58,6 +74,8 @@ class AlfeseWrapper(ModelWrapper):
             "mrmr": alfese.MRMRSelector,
             "mi": alfese.MISelector,
             "fcbf": alfese.FCBFSelector,
+            "greedy": alfese.GreedyWrapperSelector,
+            "importance": alfese.ModelImportanceSelector,
         }
 
         if self.selector_type not in selector_map:
