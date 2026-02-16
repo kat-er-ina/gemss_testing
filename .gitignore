@@ -28,7 +28,7 @@ uv.lock
 
 # Project specific
 # data/*
-results/*
+results/benchmark_results_2026*
 app/results/*
 *.html
 
