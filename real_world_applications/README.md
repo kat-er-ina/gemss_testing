@@ -20,13 +20,21 @@ powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 
 ### 2. Launch the app
 
-From the `gemss_benchmarking` root folder:
+From the repository root folder:
 
 ```bash
-uv run marimo run app/gemss_explorer_noncommercial.py
+uv run marimo run app/gemss_explorer.py
 ```
 
 The app will open in your browser at `http://localhost:2718`.
+
+## Available Datasets
+
+Real-world datasets are provided in the `data/` directory:
+- **Metabolomics**: MetaboLights datasets (MTBLS1, MTBLS2, MTBLS12968)
+- **Colonoscopy**: Additional medical dataset
+
+To acquire new datasets from MetaboLights, see [`notebooks/get_data_from_metabolights.ipynb`](notebooks/get_data_from_metabolights.ipynb).
 
 ## Using the app
 

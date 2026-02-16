@@ -28,8 +28,8 @@ uv.lock
 
 # Project specific
 # data/*
-results/benchmark_results_2026*
-app/results/*
+algorithm_comparison/results/benchmark_results_2026*
+real_world_applications/results/*
 *.html
 
 # Jupyter

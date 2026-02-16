@@ -53,7 +53,12 @@ def main():
     args = parser.parse_args()
 
     # Load Config
-    with open("configs/benchmark_config.yaml") as f:
+    config_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "configs",
+        "benchmark_config.yaml",
+    )
+    with open(config_path) as f:
         config = yaml.safe_load(f)
 
     # Filter experiments based on command-line argument
@@ -90,19 +95,35 @@ def main():
     )
     header_written = False
 
+    # Pre-calculate which methods are available for each experiment
+    experiment_method_map = {}
+    for exp in experiments:
+        exp_id = exp["id"]
+        exp_number = exp.get("exp_number", "N/A")
+        available_methods = [m for m in args.methods if m in exp["methods"].keys()]
+        if available_methods:
+            experiment_method_map[exp_number] = available_methods
+
     # Calculate total number of experiment-method combinations for progress tracking
-    total_combinations = sum(
-        len([m for m in exp["methods"].keys() if m in args.methods])
-        for exp in experiments
-    )
+    total_combinations = sum(len(methods) for methods in experiment_method_map.values())
 
     print(f"Starting Benchmark: {config['experiment_name']}")
     print(
         f"Total experiments to run: {len(experiments)} (out of {len(all_experiments)} total)"
     )
-    print(f"Methods to run: {', '.join(args.methods)}")
+    print(f"Requested methods: {', '.join(args.methods)}")
+    print(
+        f"Experiments with available methods: {len(experiment_method_map)}/{len(experiments)}"
+    )
     print(f"Total experiment-method combinations: {total_combinations}")
     print(f"Output Directory: {config['output_dir']}\n")
+
+    # Show which methods will run for each experiment
+    if len(experiment_method_map) < len(experiments):
+        skipped = len(experiments) - len(experiment_method_map)
+        print(
+            f"Note: {skipped} experiment(s) skipped (no requested methods configured)\n"
+        )
 
     # Create progress bar for all experiment-method combinations
     pbar = tqdm(
@@ -143,7 +164,7 @@ def main():
             n_desired_solutions = experiment.get("n_desired_solutions", 6)
             desired_sparsity = experiment.get("desired_sparsity", 5)
 
-            # Get method configurations and filter based on command-line argument
+            # Get method configurations and filter to only requested methods available for this experiment
             all_method_configs = experiment["methods"]
             method_configs = {
                 method_name: method_params
@@ -151,11 +172,11 @@ def main():
                 if method_name in args.methods
             }
 
+            # Skip experiments with no available methods (expected behavior)
             if not method_configs:
                 pbar.write(
-                    f"    WARNING: No methods to run for this experiment (selected: {args.methods})"
+                    f"  SKIP: No requested methods configured for this experiment"
                 )
-                continue
 
             # Instantiate and run each method
             for method_name, method_params in method_configs.items():

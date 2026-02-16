@@ -97,7 +97,7 @@ def _():
 
 @app.cell
 def _(current_dir, mo, os):
-    logo_path = os.path.join(current_dir, "datamole_logo_wide.jpg")
+    logo_path = os.path.join(current_dir, "assets", "datamole_logo_wide.jpg")
 
     # Read and display logo
     logo_link = mo.Html(
