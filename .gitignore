@@ -30,6 +30,7 @@ uv.lock
 # data/*
 algorithm_comparison/results/benchmark_results_2026*
 real_world_applications/results/*
+real_world_applications/notebooks/*.csv
 *.html
 
 # Jupyter
