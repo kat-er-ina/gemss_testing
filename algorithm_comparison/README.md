@@ -18,7 +18,11 @@ This workflow evaluates feature selection algorithms on synthetic datasets with 
 ## Methods Compared
 
 - **GEMSS**: Bayesian multi-solution selector
-- **ALFESE** (variants): Model-X knockoffs with different selectors (mrmr, mi, greedy, importance, fcbf) and tau values
+- **ALFESE** (variants): Model-X knockoffs with different selectors:
+  - **Default quick variants** (tau=1.0): mi, greedy, importance
+  - **Available but slow**: mrmr, fcbf (for high number of features, p > 1000, the runtimes are extreme and memory requirements prohibitive)
+  - Other tau values can be configured in benchmark_config.yaml
+  - For better performance, it is recommended (by ALFESE author) not to overestimate the number of solutions.
 
 ## Evaluation Metrics
 
