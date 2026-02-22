@@ -1,4 +1,19 @@
-"""Main entry point for running benchmarks."""
+"""
+Main entry point for running benchmarks.
+
+Run this script by:
+
+    uv run python run_benchmark.py                          # Run all experiments with default methods
+    uv run python run_benchmark.py -e 1 2 3                 # Run only experiments 1, 2, 3
+    uv run python run_benchmark.py -m GEMSS                 # Run all experiments with GEMSS only
+    uv run python run_benchmark.py -e 1 -m GEMSS ALFESE_mrmr_tau1.0  # Run experiment 1 with specific methods
+
+Default methods:
+- GEMSS
+- ALFESE_mi_tau1.0
+- ALFESE_greedy_tau1.0
+- ALFESE_importance_tau1.0
+"""
 
 import os
 import sys
@@ -48,7 +63,7 @@ def main():
             # "ALFESE_mrmr_tau1.0", # extreme run times, esp. for p > 1000
             # "ALFESE_fcbf_tau1.0", # memory issues for p > 1000, very long run times, esp. for p > 1000
         ],
-        help="List of methods to run (e.g., GEMSS ALFESE_mrmr_tau1.0). Default: GEMSS + a quick ALFESE-MI variants with tau=1.0",
+        help="List of methods to run (e.g., GEMSS ALFESE_mrmr_tau1.0). Default: GEMSS + a quick ALFESE variants with tau=1.0",
     )
     args = parser.parse_args()
 
@@ -161,7 +176,8 @@ def main():
             )
 
             # Get shared parameters
-            n_desired_solutions = experiment.get("n_desired_solutions", 6)
+            gemss_n_solutions = experiment.get("gemss_n_solutions", 6)
+            alfese_n_solutions = experiment.get("alfese_n_solutions", 6)
             desired_sparsity = experiment.get("desired_sparsity", 5)
 
             # Get method configurations and filter to only requested methods available for this experiment
@@ -175,7 +191,7 @@ def main():
             # Skip experiments with no available methods (expected behavior)
             if not method_configs:
                 pbar.write(
-                    f"  SKIP: No requested methods configured for this experiment"
+                    "  SKIP: No requested methods configured for this experiment"
                 )
 
             # Instantiate and run each method
@@ -189,14 +205,14 @@ def main():
                     if method_name == "GEMSS":
                         model = GEMSSWrapper(
                             task=task_type,
-                            n_components=n_desired_solutions,
+                            n_components=gemss_n_solutions,
                             sparsity=desired_sparsity,  # Pass shared sparsity parameter
                             **method_params,
                         )
 
                     elif method_name.startswith("ALFESE_"):
                         model = AlfeseWrapper(
-                            n_solutions=n_desired_solutions,
+                            n_solutions=alfese_n_solutions,
                             task=task_type,
                             selector_type=method_params["selector_type"],
                             tau=method_params["tau"],

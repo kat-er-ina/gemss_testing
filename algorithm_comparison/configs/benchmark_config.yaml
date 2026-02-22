@@ -25,7 +25,8 @@ experiments:
       binarize: true
       binary_response_ratio: 0.5
       seed: 42
-    n_desired_solutions: 6
+    gemss_n_solutions: 6
+    alfese_n_solutions: 3
     desired_sparsity: 5
     methods:
       GEMSS:
@@ -70,7 +71,8 @@ experiments:
       binarize: true
       binary_response_ratio: 0.5
       seed: 42
-    n_desired_solutions: 6
+    gemss_n_solutions: 6
+    alfese_n_solutions: 3
     desired_sparsity: 5
     methods:
       GEMSS:
@@ -115,7 +117,8 @@ experiments:
       binarize: true
       binary_response_ratio: 0.5
       seed: 42
-    n_desired_solutions: 6
+    gemss_n_solutions: 6
+    alfese_n_solutions: 3
     desired_sparsity: 5
     methods:
       GEMSS:
@@ -160,7 +163,8 @@ experiments:
       binarize: true
       binary_response_ratio: 0.5
       seed: 42
-    n_desired_solutions: 9
+    gemss_n_solutions: 9
+    alfese_n_solutions: 3
     desired_sparsity: 5
     methods:
       GEMSS:
@@ -205,7 +209,8 @@ experiments:
       binarize: true
       binary_response_ratio: 0.5
       seed: 42
-    n_desired_solutions: 9
+    gemss_n_solutions: 9
+    alfese_n_solutions: 3
     desired_sparsity: 5
     methods:
       GEMSS:
@@ -255,7 +260,8 @@ experiments:
       binarize: true
       binary_response_ratio: 0.5
       seed: 42
-    n_desired_solutions: 12
+    gemss_n_solutions: 12
+    alfese_n_solutions: 3
     desired_sparsity: 5
     methods:
       GEMSS:
@@ -300,7 +306,8 @@ experiments:
       binarize: true
       binary_response_ratio: 0.5
       seed: 42
-    n_desired_solutions: 12
+    gemss_n_solutions: 12
+    alfese_n_solutions: 3
     desired_sparsity: 5
     methods:
       GEMSS:
@@ -345,7 +352,8 @@ experiments:
       binarize: true
       binary_response_ratio: 0.5
       seed: 42
-    n_desired_solutions: 12
+    gemss_n_solutions: 12
+    alfese_n_solutions: 3
     desired_sparsity: 5
     methods:
       GEMSS:
@@ -361,14 +369,8 @@ experiments:
         student_scale: 1.0
         weight_slab: 0.9
         weight_spike: 0.1
-      ALFESE_mrmr_tau1.0:
-        selector_type: "mrmr"
-        tau: 1.0
       ALFESE_mi_tau1.0:
         selector_type: "mi"
-        tau: 1.0
-      ALFESE_fcbf_tau1.0:
-        selector_type: "fcbf"
         tau: 1.0
       ALFESE_greedy_tau1.0:
         selector_type: "greedy"
@@ -390,7 +392,8 @@ experiments:
       binarize: true
       binary_response_ratio: 0.5
       seed: 42
-    n_desired_solutions: 12
+    gemss_n_solutions: 12
+    alfese_n_solutions: 3
     desired_sparsity: 5
     methods:
       GEMSS:
@@ -406,14 +409,8 @@ experiments:
         student_scale: 1.0
         weight_slab: 0.9
         weight_spike: 0.1
-      ALFESE_mrmr_tau1.0:
-        selector_type: "mrmr"
-        tau: 1.0
       ALFESE_mi_tau1.0:
         selector_type: "mi"
-        tau: 1.0
-      ALFESE_fcbf_tau1.0:
-        selector_type: "fcbf"
         tau: 1.0
       ALFESE_greedy_tau1.0:
         selector_type: "greedy"
@@ -435,7 +432,8 @@ experiments:
       binarize: true
       binary_response_ratio: 0.5
       seed: 42
-    n_desired_solutions: 12
+    gemss_n_solutions: 12
+    alfese_n_solutions: 3
     desired_sparsity: 5
     methods:
       GEMSS:
@@ -451,14 +449,8 @@ experiments:
         student_scale: 1.0
         weight_slab: 0.9
         weight_spike: 0.1
-      ALFESE_mrmr_tau1.0:
-        selector_type: "mrmr"
-        tau: 1.0
       ALFESE_mi_tau1.0:
         selector_type: "mi"
-        tau: 1.0
-      ALFESE_fcbf_tau1.0:
-        selector_type: "fcbf"
         tau: 1.0
       ALFESE_greedy_tau1.0:
         selector_type: "greedy"
@@ -480,7 +472,8 @@ experiments:
       binarize: true
       binary_response_ratio: 0.5
       seed: 42
-    n_desired_solutions: 12
+    gemss_n_solutions: 12
+    alfese_n_solutions: 3
     desired_sparsity: 5
     methods:
       GEMSS:
@@ -496,14 +489,8 @@ experiments:
         student_scale: 1.0
         weight_slab: 0.9
         weight_spike: 0.1
-      ALFESE_mrmr_tau1.0:
-        selector_type: "mrmr"
-        tau: 1.0
       ALFESE_mi_tau1.0:
         selector_type: "mi"
-        tau: 1.0
-      ALFESE_fcbf_tau1.0:
-        selector_type: "fcbf"
         tau: 1.0
       ALFESE_greedy_tau1.0:
         selector_type: "greedy"
@@ -530,7 +517,8 @@ experiments:
       binarize: true
       binary_response_ratio: 0.5
       seed: 42
-    n_desired_solutions: 6
+    gemss_n_solutions: 6
+    alfese_n_solutions: 3
     desired_sparsity: 5
     methods:
       GEMSS:
@@ -575,7 +563,8 @@ experiments:
       binarize: true
       binary_response_ratio: 0.5
       seed: 42
-    n_desired_solutions: 6
+    gemss_n_solutions: 6
+    alfese_n_solutions: 3
     desired_sparsity: 5
     methods:
       GEMSS:
@@ -620,7 +609,8 @@ experiments:
       binarize: true
       binary_response_ratio: 0.5
       seed: 42
-    n_desired_solutions: 6
+    gemss_n_solutions: 6
+    alfese_n_solutions: 3
     desired_sparsity: 5
     methods:
       GEMSS:
@@ -670,7 +660,8 @@ experiments:
       binarize: true
       binary_response_ratio: 0.1
       seed: 42
-    n_desired_solutions: 9
+    gemss_n_solutions: 9
+    alfese_n_solutions: 3
     desired_sparsity: 5
     methods:
       GEMSS:
@@ -715,7 +706,8 @@ experiments:
       binarize: true
       binary_response_ratio: 0.2
       seed: 42
-    n_desired_solutions: 9
+    gemss_n_solutions: 9
+    alfese_n_solutions: 3
     desired_sparsity: 5
     methods:
       GEMSS:
