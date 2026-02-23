@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "alfese>=1.0.0",
-    "gemss>=1.0.2",
+    "gemss>=1.1.0",
     "ipython>=9.10.0",
     "metabolights-utils>=1.4.18",
     "numpy>=1.26.0",
@@ -15,5 +15,3 @@ dependencies = [
     "scikit-learn>=1.3.0",
     "tqdm>=4.67.3",
 ]
-[tool.marimo.runtime]
-output_max_bytes = 500_000_000
