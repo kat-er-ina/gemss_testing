@@ -19,7 +19,6 @@ The ManualUnivariateQualitySelector is not included in this comparison.
 from .base import ModelWrapper
 import alfese
 import pandas as pd
-import numpy as np
 
 
 class AlfeseWrapper(ModelWrapper):

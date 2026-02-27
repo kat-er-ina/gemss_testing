@@ -82,7 +82,7 @@ def main():
         # Convert to set of integers for faster lookup
         try:
             selected_exp_numbers = set(int(e) for e in args.experiments)
-        except ValueError as e:
+        except ValueError:
             print(f"ERROR: Experiment numbers must be integers: {args.experiments}")
             sys.exit(1)
 
@@ -308,7 +308,7 @@ def main():
     # Close progress bar
     pbar.close()
 
-    print(f"\n✅ Benchmark Complete!")
+    print("\n✅ Benchmark Complete!")
     print(f"Results saved to: {output_file}")
     print(f"Total experiments run: {len(results_log)}")
 
