@@ -499,7 +499,7 @@ wheels = [
 ]
 
 [[package]]
-name = "gemss-benchmarking"
+name = "gemss-testing"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
@@ -517,7 +517,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "alfese", specifier = ">=1.0.0" },
+    { name = "alfese", specifier = "==1.0.0" },
     { name = "gemss", specifier = ">=1.1.0" },
     { name = "ipython", specifier = ">=9.10.0" },
     { name = "metabolights-utils", specifier = ">=1.4.18" },

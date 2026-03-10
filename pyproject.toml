@@ -1,11 +1,11 @@
 [project]
-name = "gemss-benchmarking"
+name = "gemss-testing"
 version = "0.1.0"
-description = "Benchmarking suite for GEMSS and alternative feature selection methods"
+description = "Additional testing of the GEMSS algorithm"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "alfese>=1.0.0",
+    "alfese==1.0.0",
     "gemss>=1.1.0",
     "ipython>=9.10.0",
     "metabolights-utils>=1.4.18",
