@@ -1,47 +1,100 @@
-"""Adapter for ALFESE package.
+"""Adapter for ALFESE (ALternative FEature SElection) package.
 
-Note:
-------
-alfese.py contains six feature-selection methods as classes:
+This wrapper provides a standardized interface to the ALFESE feature selection
+algorithm, which serves as a wrapper for several feature selection methods to discover
+multiple alternative sparse solutions.
 
-- FCBFSelector: (adapted version of) FCBF, a multivariate filter method
-- GreedyWrapperSelector: a wrapper method (by default, using a decision tree as prediction model)
-- ManualUnivariateQualitySelector: a univariate filter method where you can enter each feature's utility directly (instead of computing it from a dataset)
-- MISelector: a univariate filter method based on mutual information
-- ModelImportanceSelector: a univariate filter method using feature importances from a prediction model (by default, a decision tree)
-- MRMRSelector: mRMR, a multivariate filter method
+Supported Feature Selection Methods
+-----------------------------------
+ALFESE contains six feature-selection methods:
 
-The feature-selection method determines the notion of feature-set quality, i.e., the optimization objective.
+- **FCBFSelector**: Fast Correlation-Based Filter (FCBF), a multivariate filter
+  method based on information theory.
+- **GreedyWrapperSelector**: A wrapper method using a prediction model (default:
+  decision tree) to evaluate feature subsets greedily.
+- **MISelector**: Univariate filter method based on mutual information between
+  features and target.
+- **ModelImportanceSelector**: Univariate filter using feature importances from
+  a prediction model (default: decision tree).
+- **MRMRSelector**: Minimum Redundancy Maximum Relevance (mRMR), a multivariate
+  filter balancing relevance and redundancy.
+- **ManualUnivariateQualitySelector**: Manual specification of feature utilities
+  (not used in benchmarking).
 
-The ManualUnivariateQualitySelector is not included in this comparison.
+The feature-selection method determines the optimization objective for finding
+diverse solutions.
 """
 
-from .base import ModelWrapper
-import alfese
+from typing import Dict, List, Optional, Any
+import numpy as np
 import pandas as pd
+import alfese
+from .base import ModelWrapper
 
 
 class AlfeseWrapper(ModelWrapper):
+    """
+    Wrapper for the ALFESE feature selection algorithm.
+
+    Parameters
+    ----------
+    n_solutions : int, optional
+        Number of alternative solutions to find, by default 3.
+        ALFESE returns 1 primary solution plus (n_solutions-1) alternatives.
+    task : str, optional
+        Task type: 'regression' or 'classification', by default 'regression'.
+    selector_type : str, optional
+        Type of ALFESE selector, by default 'mrmr'. Valid options:
+
+        - 'mrmr' : Minimum Redundancy Maximum Relevance
+        - 'mi' : Mutual Information
+        - 'fcbf' : Fast Correlation-Based Filter
+        - 'greedy' : Greedy Wrapper (using prediction model)
+        - 'importance' : Model-based feature importance
+
+    tau : float, optional
+        Diversity parameter between 0 and 1, by default 0.5.
+        Higher values enforce more diversity between solutions.
+        tau=0 means no diversity constraint (may return similar solutions).
+        tau=1 means maximum diversity (solutions must be completely different).
+    k : int, optional
+        Number of features to select per solution, by default None.
+        If None, defaults to 20% of total features.
+    n_iter : int, optional
+        Maximum number of iterations for the search algorithm, by default None.
+        If None, uses ALFESE package default.
+    **kwargs : dict
+        Additional parameters passed to the ALFESE selector.
+
+    Attributes
+    ----------
+    n_solutions : int
+        Number of solutions to find.
+    task : str
+        Task type.
+    selector_type : str
+        Selected ALFESE method.
+    tau : float
+        Diversity parameter.
+    k : Optional[int]
+        Target number of features.
+    n_iter : Optional[int]
+        Maximum iterations.
+    kwargs : dict
+        Additional selector parameters.
+    """
+
     def __init__(
         self,
-        n_solutions=3,
-        task="regression",
-        selector_type="mrmr",
-        tau=0.5,
-        k=None,
-        n_iter=None,
-        **kwargs,
-    ):
-        """
-        Args:
-            n_solutions: Number of alternative solutions to find
-            task: 'regression' or 'classification'
-            selector_type: Type of ALFESE selector ('mrmr', 'mi', 'fcbf', 'greedy', 'importance')
-            tau: Diversity parameter (0-1, higher means more diverse)
-            k: Number of features to select per solution (defaults to 20% of features)
-            n_iter: Maximum number of iterations (None uses package default)
-            **kwargs: Extra args for ALFESE selector
-        """
+        n_solutions: int = 3,
+        task: str = "regression",
+        selector_type: str = "mrmr",
+        tau: float = 0.5,
+        k: Optional[int] = None,
+        n_iter: Optional[int] = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize ALFESE wrapper with specified parameters."""
         self.n_solutions = n_solutions
         self.task = task
         self.selector_type = selector_type.lower()
@@ -50,12 +103,28 @@ class AlfeseWrapper(ModelWrapper):
         self.n_iter = n_iter
         self.kwargs = kwargs
 
-    def fit(self, X, y):
+    def fit(self, X: np.ndarray, y: np.ndarray) -> Dict[str, Dict[str, List[int]]]:
         """
-        Fit ALFESE feature selector.
+        Fit ALFESE selector and return multiple diverse feature solutions.
 
-        Note: ALFESE has a complex API requiring data setup and solver initialization.
-        This wrapper provides a simplified interface.
+        This method converts data to pandas format (required by ALFESE), initializes
+        the specified selector, and performs simultaneous search for diverse solutions.
+
+        Parameters
+        ----------
+        X : np.ndarray
+            Feature matrix of shape (n_samples, n_features).
+        y : np.ndarray
+            Target variable of shape (n_samples,).
+
+        Returns
+        -------
+        Dict[str, Dict[str, List[int]]]
+            Dictionary mapping solution identifiers (e.g., 'solution_0') to solution
+            dictionaries. Each solution contains:
+
+            - 'support' : List[int]
+                Zero-based indices of selected features.
         """
         # Convert to pandas if needed (ALFESE expects pandas)
         if not isinstance(X, pd.DataFrame):

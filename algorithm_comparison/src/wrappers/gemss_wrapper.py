@@ -1,31 +1,65 @@
-"""Adapter for GEMSS package."""
+"""Adapter for GEMSS package.
 
+This wrapper provides a standardized interface to the GEMSS feature selection
+algorithm, which uses Bayesian inference to discover multiple alternative sparse
+solutions (the Rashomon set).
+"""
+
+from typing import Dict, List, Optional, Any
+import numpy as np
 from .base import ModelWrapper
 from gemss.feature_selection.inference import BayesianFeatureSelector
 from gemss.postprocessing.result_postprocessing import recover_solutions
 
 
 class GEMSSWrapper(ModelWrapper):
+    """
+    Wrapper for the GEMSS feature selection algorithm.
+
+    Parameters
+    ----------
+    task : str, optional
+        Task type: 'regression' or 'classification', by default 'regression'.
+    n_components : int, optional
+        Number of alternative solutions to find, by default 6.
+    sparsity : int, optional
+        Desired sparsity level (number of features) for solution recovery,
+        by default None. If None, uses the value from kwargs or defaults to 5.
+    lambda_jaccard : float, optional
+        Diversity penalty strength for Jaccard regularization, by default 0.
+        Higher values encourage more diverse solutions.
+    regularize : bool, optional
+        Whether to apply Jaccard diversity penalty during optimization,
+        by default False.
+    **kwargs : dict
+        Additional parameters passed to BayesianFeatureSelector.
+
+    Attributes
+    ----------
+    task : str
+        The task type (regression or classification).
+    n_components : int
+        Number of solutions to find.
+    sparsity : Optional[int]
+        Target sparsity level.
+    lambda_jaccard : float
+        Diversity penalty coefficient.
+    regularize : bool
+        Whether diversity regularization is enabled.
+    params : dict
+        Additional parameters for the GEMSS selector.
+    """
+
     def __init__(
         self,
-        task="regression",
-        n_components=6,
-        sparsity=None,
-        lambda_jaccard=0,
-        regularize=False,
-        **kwargs,
-    ):
-        """
-        Initialize GEMSS wrapper.
-
-        Args:
-            task: 'regression' or 'classification'
-            n_components: Number of alternative solutions to find
-            sparsity: Desired sparsity level (used for solution recovery)
-            lambda_jaccard: Diversity penalty strength for Jaccard regularization
-            regularize: Whether to apply Jaccard diversity penalty
-            **kwargs: Additional parameters for BayesianFeatureSelector
-        """
+        task: str = "regression",
+        n_components: int = 6,
+        sparsity: Optional[int] = None,
+        lambda_jaccard: float = 0,
+        regularize: bool = False,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize GEMSS wrapper with specified parameters."""
         self.task = task
         self.n_components = n_components
         self.sparsity = sparsity
@@ -33,7 +67,30 @@ class GEMSSWrapper(ModelWrapper):
         self.regularize = regularize
         self.params = kwargs
 
-    def fit(self, X, y):
+    def fit(self, X: np.ndarray, y: np.ndarray) -> Dict[str, Dict[str, List[int]]]:
+        """
+        Fit GEMSS and return multiple sparse feature solutions.
+
+        This method runs the GEMSS optimization procedure to discover multiple
+        diverse sparse solutions, then recovers the top solutions at the specified
+        sparsity level.
+
+        Parameters
+        ----------
+        X : np.ndarray
+            Feature matrix of shape (n_samples, n_features).
+        y : np.ndarray
+            Target variable of shape (n_samples,).
+
+        Returns
+        -------
+        Dict[str, Dict[str, List[int]]]
+            Dictionary mapping component names (e.g., 'component_0') to solution
+            dictionaries. Each solution contains:
+
+            - 'support' : List[int]
+                Zero-based indices of selected features.
+        """
         # 1. Initialize
         # Note: We filter kwargs to avoid passing parameters GEMSS doesn't recognize
         # if necessary, but typically GEMSS ignores unknown kwargs or we clean them.

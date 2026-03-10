@@ -1,18 +1,69 @@
-"""
-Main entry point for running benchmarks.
+"""Main entry point for running feature selection benchmarks.
 
-Run this script by:
+This script executes benchmarking experiments comparing GEMSS and ALFESE feature
+selection algorithms on synthetic datasets with known ground truth. Results are
+saved incrementally to CSV files for analysis.
 
-    uv run python run_benchmark.py                          # Run all experiments with default methods
-    uv run python run_benchmark.py -e 1 2 3                 # Run only experiments 1, 2, 3
-    uv run python run_benchmark.py -m GEMSS                 # Run all experiments with GEMSS only
-    uv run python run_benchmark.py -e 1 -m GEMSS ALFESE_mrmr_tau1.0  # Run experiment 1 with specific methods
+The script supports:
+- Running all experiments or a subset via command-line arguments
+- Running all methods or specific methods
+- Configurable experimental parameters via YAML config file
+- Progress tracking with detailed status messages
+- Incremental result saving (resilient to interruptions)
+- Automatic error handling and logging
 
-Default methods:
+Command-Line Usage
+------------------
+Run all experiments with default methods::
+
+    uv run python run_benchmark.py
+
+Run specific experiments only::
+
+    uv run python run_benchmark.py -e 1 2 3
+
+Run all experiments with GEMSS only::
+
+    uv run python run_benchmark.py -m GEMSS
+
+Run specific experiment with specific methods::
+
+    uv run python run_benchmark.py -e 1 -m GEMSS ALFESE_mrmr_tau1.0
+
+Default Methods
+---------------
+If -m/--methods is not specified, the following methods are run:
+
 - GEMSS
 - ALFESE_mi_tau1.0
 - ALFESE_greedy_tau1.0
 - ALFESE_importance_tau1.0
+
+Note: ALFESE_mrmr and ALFESE_fcbf have extreme runtimes and memory usage for
+p > 1000, so they are excluded from defaults.
+
+Configuration
+-------------
+Experimental parameters are defined in:
+``algorithm_comparison/configs/benchmark_config.yaml``
+
+Results
+-------
+Results are saved to:
+``algorithm_comparison/results/benchmark_results_<timestamp>.csv``
+
+Each row contains:
+- Experiment metadata (ID, description, parameters)
+- Dataset characteristics (n_samples, n_features, sparsity, etc.)
+- Method name and runtime
+- Evaluation metrics (Recall, Precision, F1, Success Index, etc.)
+- Status (Success or Failed with error message)
+
+See Also
+--------
+algorithm_comparison.src.data_factory : Data generation utilities
+algorithm_comparison.src.evaluation : Metric calculation functions
+algorithm_comparison.src.wrappers : Algorithm wrapper implementations
 """
 
 import os
@@ -32,7 +83,58 @@ from src.wrappers.alfese_wrapper import AlfeseWrapper
 from src.evaluation import calculate_metrics, get_empty_metrics
 
 
-def main():
+def main() -> None:
+    """
+    Execute the benchmarking suite for feature selection algorithms.
+
+    This function orchestrates the complete benchmarking workflow:
+
+    1. Parse command-line arguments for experiment and method selection
+    2. Load experimental configuration from YAML file
+    3. Filter experiments based on user selection
+    4. For each experiment:
+
+       a. Generate synthetic dataset with known ground truth
+       b. Run each selected method (GEMSS, ALFESE variants)
+       c. Evaluate solutions against ground truth
+       d. Save results incrementally to CSV
+
+    5. Provide progress tracking and error handling
+
+    The function creates a timestamped output CSV file and writes results
+    incrementally as experiments complete. This ensures partial results are
+    preserved if the script is interrupted.
+
+    Command-Line Arguments
+    ----------------------
+    -e, --experiments : List[int], optional
+        Experiment numbers to run (e.g., 1 2 3). If not specified, runs all
+        experiments defined in the config file.
+    -m, --methods : List[str], optional
+        Method names to run. If not specified, uses default set:
+        ['GEMSS', 'ALFESE_mi_tau1.0', 'ALFESE_greedy_tau1.0',
+         'ALFESE_importance_tau1.0']
+
+    Raises
+    ------
+    SystemExit
+        If invalid experiment numbers are provided or no matching experiments
+        are found in the configuration.
+
+    Notes
+    -----
+    Each experiment-method combination is tracked with a progress bar.
+    Failed experiments are logged with error messages but do not stop execution.
+
+    The benchmark uses stratified metrics that compare the union of found features
+    across all solutions to the union of ground truth features (Rashomon set).
+
+    Output CSV columns include:
+    - Exp_Number, Experiment_ID, Experiment_Description
+    - Method, Task, Runtime_Sec, Status
+    - Dataset parameters: n_samples, n_features, sparsity, noise_std, etc.
+    - Evaluation metrics: Recall, Precision, F1_Score, Success_Index, etc.
+    """
     # Parse command-line arguments
     parser = argparse.ArgumentParser(
         description="Run GEMSS benchmarking experiments",
