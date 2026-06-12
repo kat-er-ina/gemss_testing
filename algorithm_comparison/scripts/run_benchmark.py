@@ -78,6 +78,7 @@ from tqdm import tqdm
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.data_factory import get_benchmark_data
+from src.hard_data_factory import generate_overlapping_dataset
 from src.wrappers.gemss_wrapper import GEMSSWrapper
 from src.wrappers.logistic_gemss import LogisticGEMSSWrapper
 from src.wrappers.alfese_wrapper import AlfeseWrapper
@@ -278,18 +279,36 @@ def main() -> None:
         task_type = "classification" if ds_params["binarize"] else "regression"
 
         try:
-            # Generate Data
-            X, y, true_support = get_benchmark_data(
-                n_samples=ds_params["n_samples"],
-                n_features=ds_params["n_features"],
-                n_generating_solutions=ds_params["n_generating_solutions"],
-                sparsity=ds_params["sparsity"],
-                noise_std=ds_params["noise_std"],
-                nan_ratio=ds_params["nan_ratio"],
-                binarize=ds_params["binarize"],
-                binary_ratio=ds_params["binary_response_ratio"],
-                seed=ds_params["seed"],
-            )
+            # Generate Data. `generator: overlap` uses the honest/hard generator
+            # with overlapping valid solutions + equal-variance features; the
+            # default reproduces the original linear-Gaussian benchmark.
+            generator = experiment.get("generator", "linear")
+            if generator == "overlap":
+                X, y, true_support, _planted = generate_overlapping_dataset(
+                    n_samples=ds_params["n_samples"],
+                    n_features=ds_params["n_features"],
+                    n_solutions=ds_params["n_generating_solutions"],
+                    sparsity=ds_params["sparsity"],
+                    latent_rank=ds_params.get("latent_rank", 2),
+                    overlap=ds_params.get("overlap", 2),
+                    noise_std=ds_params["noise_std"],
+                    nan_ratio=ds_params["nan_ratio"],
+                    binarize=ds_params["binarize"],
+                    binary_response_ratio=ds_params["binary_response_ratio"],
+                    seed=ds_params["seed"],
+                )
+            else:
+                X, y, true_support = get_benchmark_data(
+                    n_samples=ds_params["n_samples"],
+                    n_features=ds_params["n_features"],
+                    n_generating_solutions=ds_params["n_generating_solutions"],
+                    sparsity=ds_params["sparsity"],
+                    noise_std=ds_params["noise_std"],
+                    nan_ratio=ds_params["nan_ratio"],
+                    binarize=ds_params["binarize"],
+                    binary_ratio=ds_params["binary_response_ratio"],
+                    seed=ds_params["seed"],
+                )
 
             # Get shared parameters.
             # `n_solutions` is the FAIR shared solution budget used by every

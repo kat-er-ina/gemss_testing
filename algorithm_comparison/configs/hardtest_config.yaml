@@ -1,0 +1,141 @@
+# Hard-test configuration: OVERLAPPING valid solutions (tests the core claim)
+# ===========================================================================
+# Uses `generator: overlap` (src/hard_data_factory.py): a genuine
+# latent_rank-dimensional mechanism, equal-variance signal/noise features (no
+# variance giveaway), and a shared feature core so the valid solutions OVERLAP.
+#
+# The headline question GEMSS makes but the old benchmark never tested:
+#   as solutions share more features (overlap 0 -> 4 of 5), does simultaneous
+#   mixture discovery hold up where sequential masking -- which peels disjoint
+#   sets -- structurally cannot?
+#
+# Equal budget for every method (n_solutions=6, sparsity=5). 3 planted
+# solutions, latent_rank=2. Ground truth = union of planted supports.
+
+output_dir: "results/"
+experiment_name: "GEMSS_hardtest_overlap"
+
+_anchors:
+  gemss_std: &gemss_std
+    lambda_jaccard: 1000
+    batch_size: 16
+    regularize: true
+    n_iter: 4000
+    prior: "sss"
+    var_slab: 100.0
+    var_spike: 0.1
+    lr: 0.002
+    student_df: 1
+    student_scale: 1.0
+    weight_slab: 0.9
+    weight_spike: 0.1
+  baselines_clf: &baselines_clf
+    Masking_lasso: {estimator: "lasso", alpha: 0.01}
+    Masking_elasticnet: {estimator: "elasticnet", alpha: 0.01}
+    Masking_logistic: {estimator: "logistic", alpha: 0.05}
+    StabilitySelection: {alpha: 0.05, n_bootstrap: 100, threshold: 0.6}
+    ALFESE_mi_tau1.0: {selector_type: "mi", tau: 1.0}
+    ALFESE_greedy_tau1.0: {selector_type: "greedy", tau: 1.0}
+    ALFESE_importance_tau1.0: {selector_type: "importance", tau: 1.0}
+  baselines_reg: &baselines_reg
+    Masking_lasso: {estimator: "lasso", alpha: 0.01}
+    Masking_elasticnet: {estimator: "elasticnet", alpha: 0.01}
+    StabilitySelection: {alpha: 0.02, n_bootstrap: 100, threshold: 0.6}
+    ALFESE_mi_tau1.0: {selector_type: "mi", tau: 1.0}
+    ALFESE_greedy_tau1.0: {selector_type: "greedy", tau: 1.0}
+    ALFESE_importance_tau1.0: {selector_type: "importance", tau: 1.0}
+
+experiments:
+  # ----- overlap sweep at N=100 P=200 (classification) -----------------
+  - id: "hd_clf_100x200_ov0"
+    exp_number: 1
+    description: "Hard: clf overlap=0 (disjoint) N=100 P=200"
+    generator: overlap
+    dataset: {n_samples: 100, n_features: 200, n_generating_solutions: 3, sparsity: 5, latent_rank: 2, overlap: 0, noise_std: 0.05, nan_ratio: 0.0, binarize: true, binary_response_ratio: 0.5, seed: 42}
+    n_solutions: 6
+    desired_sparsity: 5
+    methods: {GEMSS: *gemss_std, GEMSS_logistic: *gemss_std, GEMSS_single: *gemss_std, <<: *baselines_clf}
+
+  - id: "hd_clf_100x200_ov2"
+    exp_number: 2
+    description: "Hard: clf overlap=2 N=100 P=200"
+    generator: overlap
+    dataset: {n_samples: 100, n_features: 200, n_generating_solutions: 3, sparsity: 5, latent_rank: 2, overlap: 2, noise_std: 0.05, nan_ratio: 0.0, binarize: true, binary_response_ratio: 0.5, seed: 42}
+    n_solutions: 6
+    desired_sparsity: 5
+    methods: {GEMSS: *gemss_std, GEMSS_logistic: *gemss_std, GEMSS_single: *gemss_std, <<: *baselines_clf}
+
+  - id: "hd_clf_100x200_ov4"
+    exp_number: 3
+    description: "Hard: clf overlap=4 (heavy share) N=100 P=200"
+    generator: overlap
+    dataset: {n_samples: 100, n_features: 200, n_generating_solutions: 3, sparsity: 5, latent_rank: 2, overlap: 4, noise_std: 0.05, nan_ratio: 0.0, binarize: true, binary_response_ratio: 0.5, seed: 42}
+    n_solutions: 6
+    desired_sparsity: 5
+    methods: {GEMSS: *gemss_std, GEMSS_logistic: *gemss_std, GEMSS_single: *gemss_std, <<: *baselines_clf}
+
+  # ----- overlap sweep at N=100 P=500 (classification) -----------------
+  - id: "hd_clf_100x500_ov0"
+    exp_number: 4
+    description: "Hard: clf overlap=0 N=100 P=500"
+    generator: overlap
+    dataset: {n_samples: 100, n_features: 500, n_generating_solutions: 3, sparsity: 5, latent_rank: 2, overlap: 0, noise_std: 0.05, nan_ratio: 0.0, binarize: true, binary_response_ratio: 0.5, seed: 42}
+    n_solutions: 6
+    desired_sparsity: 5
+    methods: {GEMSS: *gemss_std, GEMSS_logistic: *gemss_std, GEMSS_single: *gemss_std, <<: *baselines_clf}
+
+  - id: "hd_clf_100x500_ov2"
+    exp_number: 5
+    description: "Hard: clf overlap=2 N=100 P=500"
+    generator: overlap
+    dataset: {n_samples: 100, n_features: 500, n_generating_solutions: 3, sparsity: 5, latent_rank: 2, overlap: 2, noise_std: 0.05, nan_ratio: 0.0, binarize: true, binary_response_ratio: 0.5, seed: 42}
+    n_solutions: 6
+    desired_sparsity: 5
+    methods: {GEMSS: *gemss_std, GEMSS_logistic: *gemss_std, GEMSS_single: *gemss_std, <<: *baselines_clf}
+
+  - id: "hd_clf_100x500_ov4"
+    exp_number: 6
+    description: "Hard: clf overlap=4 N=100 P=500"
+    generator: overlap
+    dataset: {n_samples: 100, n_features: 500, n_generating_solutions: 3, sparsity: 5, latent_rank: 2, overlap: 4, noise_std: 0.05, nan_ratio: 0.0, binarize: true, binary_response_ratio: 0.5, seed: 42}
+    n_solutions: 6
+    desired_sparsity: 5
+    methods: {GEMSS: *gemss_std, GEMSS_logistic: *gemss_std, GEMSS_single: *gemss_std, <<: *baselines_clf}
+
+  # ----- small-sample stress (classification) --------------------------
+  - id: "hd_clf_50x200_ov2"
+    exp_number: 7
+    description: "Hard: clf small-n overlap=2 N=50 P=200"
+    generator: overlap
+    dataset: {n_samples: 50, n_features: 200, n_generating_solutions: 3, sparsity: 5, latent_rank: 2, overlap: 2, noise_std: 0.05, nan_ratio: 0.0, binarize: true, binary_response_ratio: 0.5, seed: 42}
+    n_solutions: 6
+    desired_sparsity: 5
+    methods: {GEMSS: *gemss_std, GEMSS_logistic: *gemss_std, GEMSS_single: *gemss_std, <<: *baselines_clf}
+
+  - id: "hd_clf_50x200_ov4"
+    exp_number: 8
+    description: "Hard: clf small-n overlap=4 N=50 P=200"
+    generator: overlap
+    dataset: {n_samples: 50, n_features: 200, n_generating_solutions: 3, sparsity: 5, latent_rank: 2, overlap: 4, noise_std: 0.05, nan_ratio: 0.0, binarize: true, binary_response_ratio: 0.5, seed: 42}
+    n_solutions: 6
+    desired_sparsity: 5
+    methods: {GEMSS: *gemss_std, GEMSS_logistic: *gemss_std, GEMSS_single: *gemss_std, <<: *baselines_clf}
+
+  # ----- regression mirrors --------------------------------------------
+  - id: "hd_reg_100x200_ov2"
+    exp_number: 9
+    description: "Hard: reg overlap=2 N=100 P=200"
+    generator: overlap
+    dataset: {n_samples: 100, n_features: 200, n_generating_solutions: 3, sparsity: 5, latent_rank: 2, overlap: 2, noise_std: 0.05, nan_ratio: 0.0, binarize: false, binary_response_ratio: 0.5, seed: 42}
+    n_solutions: 6
+    desired_sparsity: 5
+    methods: {GEMSS: *gemss_std, GEMSS_single: *gemss_std, <<: *baselines_reg}
+
+  - id: "hd_reg_100x200_ov4"
+    exp_number: 10
+    description: "Hard: reg overlap=4 N=100 P=200"
+    generator: overlap
+    dataset: {n_samples: 100, n_features: 200, n_generating_solutions: 3, sparsity: 5, latent_rank: 2, overlap: 4, noise_std: 0.05, nan_ratio: 0.0, binarize: false, binary_response_ratio: 0.5, seed: 42}
+    n_solutions: 6
+    desired_sparsity: 5
+    methods: {GEMSS: *gemss_std, GEMSS_single: *gemss_std, <<: *baselines_reg}
