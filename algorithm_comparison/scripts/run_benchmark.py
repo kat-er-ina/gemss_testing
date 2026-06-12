@@ -79,7 +79,9 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.data_factory import get_benchmark_data
 from src.wrappers.gemss_wrapper import GEMSSWrapper
+from src.wrappers.logistic_gemss import LogisticGEMSSWrapper
 from src.wrappers.alfese_wrapper import AlfeseWrapper
+from src.wrappers.sklearn_wrappers import MaskingWrapper, StabilitySelectionWrapper
 from src.evaluation import calculate_metrics, get_empty_metrics
 
 
@@ -159,13 +161,25 @@ def main() -> None:
         nargs="+",
         default=[
             "GEMSS",
+            "GEMSS_logistic",
+            "GEMSS_single",
+            "Masking_lasso",
+            "Masking_elasticnet",
+            "Masking_logistic",
+            "StabilitySelection",
             "ALFESE_mi_tau1.0",
             "ALFESE_greedy_tau1.0",
             "ALFESE_importance_tau1.0",
             # "ALFESE_mrmr_tau1.0", # extreme run times, esp. for p > 1000
             # "ALFESE_fcbf_tau1.0", # memory issues for p > 1000, very long run times, esp. for p > 1000
         ],
-        help="List of methods to run (e.g., GEMSS ALFESE_mrmr_tau1.0). Default: GEMSS + a quick ALFESE variants with tau=1.0",
+        help="List of methods to run. Default: GEMSS variants + masking/stability baselines + quick ALFESE variants. Only methods configured for a given experiment are run.",
+    )
+    parser.add_argument(
+        "-c",
+        "--config",
+        default="benchmark_config.yaml",
+        help="Config filename under algorithm_comparison/configs/ (default: benchmark_config.yaml; use stresstest_config.yaml for the fair-budget stress sweep).",
     )
     args = parser.parse_args()
 
@@ -173,7 +187,7 @@ def main() -> None:
     config_path = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
         "configs",
-        "benchmark_config.yaml",
+        args.config,
     )
     with open(config_path) as f:
         config = yaml.safe_load(f)
@@ -277,10 +291,24 @@ def main() -> None:
                 seed=ds_params["seed"],
             )
 
-            # Get shared parameters
-            gemss_n_solutions = experiment.get("gemss_n_solutions", 6)
-            alfese_n_solutions = experiment.get("alfese_n_solutions", 6)
+            # Get shared parameters.
+            # `n_solutions` is the FAIR shared solution budget used by every
+            # multi-solution method (stress-test config). The legacy keys
+            # gemss_n_solutions / alfese_n_solutions are honoured as fallbacks so
+            # the original benchmark_config.yaml still reproduces unchanged.
+            shared_budget = experiment.get("n_solutions")
+            gemss_n_solutions = (
+                shared_budget
+                if shared_budget is not None
+                else experiment.get("gemss_n_solutions", 6)
+            )
+            alfese_n_solutions = (
+                shared_budget
+                if shared_budget is not None
+                else experiment.get("alfese_n_solutions", 6)
+            )
             desired_sparsity = experiment.get("desired_sparsity", 5)
+            seed = ds_params.get("seed", 42)
 
             # Get method configurations and filter to only requested methods available for this experiment
             all_method_configs = experiment["methods"]
@@ -310,6 +338,47 @@ def main() -> None:
                             n_components=gemss_n_solutions,
                             sparsity=desired_sparsity,  # Pass shared sparsity parameter
                             **method_params,
+                        )
+
+                    elif method_name == "GEMSS_logistic":
+                        # Proper Bernoulli likelihood (the "classification fix").
+                        model = LogisticGEMSSWrapper(
+                            task=task_type,
+                            n_components=gemss_n_solutions,
+                            sparsity=desired_sparsity,
+                            **method_params,
+                        )
+
+                    elif method_name == "GEMSS_single":
+                        # Single-Gaussian ablation: no mixture, one mode only.
+                        single_params = {
+                            k: v for k, v in method_params.items() if k != "n_components"
+                        }
+                        model = GEMSSWrapper(
+                            task=task_type,
+                            n_components=1,
+                            sparsity=desired_sparsity,
+                            **single_params,
+                        )
+
+                    elif method_name.startswith("Masking_"):
+                        model = MaskingWrapper(
+                            estimator=method_params.get("estimator", "lasso"),
+                            n_solutions=gemss_n_solutions,
+                            sparsity=desired_sparsity,
+                            task=task_type,
+                            alpha=method_params.get("alpha", 0.01),
+                            seed=seed,
+                        )
+
+                    elif method_name == "StabilitySelection":
+                        model = StabilitySelectionWrapper(
+                            sparsity=desired_sparsity,
+                            task=task_type,
+                            alpha=method_params.get("alpha", 0.02),
+                            n_bootstrap=method_params.get("n_bootstrap", 100),
+                            threshold=method_params.get("threshold", 0.6),
+                            seed=seed,
                         )
 
                     elif method_name.startswith("ALFESE_"):
