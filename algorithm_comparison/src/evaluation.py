@@ -5,7 +5,10 @@ against ground truth feature sets. Metrics focus on the union of discovered feat
 across all solutions (the discovered Rashomon set) compared to the true Rashomon set.
 """
 
-from typing import Dict, Set, Any
+from typing import Dict, List, Set, Any
+
+import numpy as np
+from scipy.optimize import linear_sum_assignment
 
 
 def calculate_metrics(
@@ -107,6 +110,80 @@ def calculate_metrics(
         "n_correct": n_correct,
         "n_missed": n_missed,
         "n_extra": n_extra,
+    }
+
+
+def _jaccard(a: Set[int], b: Set[int]) -> float:
+    """Jaccard similarity of two index sets (empty/empty -> 1.0)."""
+    if not a and not b:
+        return 1.0
+    union = len(a | b)
+    return len(a & b) / union if union else 0.0
+
+
+def calculate_structural_metrics(
+    predicted_solutions_dict: Dict[str, Dict[str, Any]],
+    planted_supports: Dict[str, List[int]],
+) -> Dict[str, float]:
+    """Per-SOLUTION recovery metrics (not just the union of features).
+
+    The union metrics (:func:`calculate_metrics`) cannot see whether a method
+    reproduces the *structure* of overlapping solutions -- in particular the
+    shared feature core that disjoint sequential masking is structurally unable
+    to place in more than one solution. This function evaluates the recovered
+    solution *sets* against the planted supports.
+
+    Parameters
+    ----------
+    predicted_solutions_dict : dict
+        Predicted solutions, each a dict with a 'support' list of indices.
+    planted_supports : dict
+        The ground-truth planted supports (e.g. from the overlap generator),
+        each a list of feature indices. They may share a common core.
+
+    Returns
+    -------
+    dict with keys
+        - **sol_mean_jaccard** : mean over planted supports of the Jaccard with
+          its one-to-one (Hungarian) matched predicted solution. Distinct
+          predicted solutions are matched to distinct planted ones, so a method
+          cannot reuse a single good solution to cover several planted ones.
+        - **sol_recovered_0.8** / **sol_exact** : count of planted supports
+          matched at Jaccard >= 0.8 / == 1.0.
+        - **sol_core_size** : size of the shared core (intersection of all
+          planted supports). 0 means disjoint (overlap=0).
+        - **sol_preds_with_core** : number of *predicted* solutions that contain
+          the full shared core. The discriminator for overlap handling: disjoint
+          masking can have at most one; a mixture may have several.
+        - **n_predicted** : number of non-empty predicted solutions.
+    """
+    planted = [set(s) for s in planted_supports.values()]
+    predicted = [
+        set(s.get("support", []))
+        for s in predicted_solutions_dict.values()
+        if s.get("support")
+    ]
+    core: Set[int] = set.intersection(*planted) if planted else set()
+
+    n_p = len(planted)
+    matched = np.zeros(n_p)
+    if predicted:
+        sim = np.array([[_jaccard(p, q) for q in predicted] for p in planted])
+        rows, cols = linear_sum_assignment(-sim)  # maximize total Jaccard
+        for i, j in zip(rows, cols):
+            matched[i] = sim[i, j]
+
+    preds_with_core = (
+        sum(1 for q in predicted if core and core.issubset(q)) if core else 0
+    )
+
+    return {
+        "sol_mean_jaccard": float(matched.mean()) if n_p else 0.0,
+        "sol_recovered_0.8": int((matched >= 0.8).sum()),
+        "sol_exact": int((matched >= 0.999).sum()),
+        "sol_core_size": len(core),
+        "sol_preds_with_core": int(preds_with_core),
+        "n_predicted": len(predicted),
     }
 
 

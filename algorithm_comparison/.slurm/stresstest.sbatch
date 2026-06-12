@@ -38,10 +38,10 @@ export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
 # Config + optional seeds overridable at submit time, e.g.
 #   sbatch --export=ALL,CFG=hardtest_config.yaml,SEEDS="42 7 123" stresstest.sbatch
 CFG="${CFG:-stresstest_config.yaml}"
-SEED_ARG=""
-[ -n "${SEEDS:-}" ] && SEED_ARG="-s ${SEEDS}"
+SEED_ARG=""; [ -n "${SEEDS:-}" ] && SEED_ARG="-s ${SEEDS}"
+BUDGET_ARG=""; [ -n "${BUDGET:-}" ] && BUDGET_ARG="-b ${BUDGET}"
 
 cd algorithm_comparison
-echo "[*] Sweep starting on $(hostname) at $(date): config=$CFG seeds='${SEEDS:-<config default>}'"
-../.venv/bin/python scripts/run_benchmark.py -c "$CFG" $SEED_ARG
+echo "[*] Sweep starting on $(hostname) at $(date): config=$CFG seeds='${SEEDS:-<cfg>}' budget='${BUDGET:-<cfg>}'"
+../.venv/bin/python scripts/run_benchmark.py -c "$CFG" $SEED_ARG $BUDGET_ARG
 echo "[*] Done at $(date). Results in algorithm_comparison/results/"

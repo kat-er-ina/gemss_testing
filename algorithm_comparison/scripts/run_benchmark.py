@@ -84,7 +84,11 @@ from src.wrappers.gemss_wrapper import GEMSSWrapper
 from src.wrappers.logistic_gemss import LogisticGEMSSWrapper
 from src.wrappers.alfese_wrapper import AlfeseWrapper
 from src.wrappers.sklearn_wrappers import MaskingWrapper, StabilitySelectionWrapper
-from src.evaluation import calculate_metrics, get_empty_metrics
+from src.evaluation import (
+    calculate_metrics,
+    calculate_structural_metrics,
+    get_empty_metrics,
+)
 
 
 def main() -> None:
@@ -190,6 +194,13 @@ def main() -> None:
         nargs="+",
         default=None,
         help="Optional list of seeds (e.g. 42 7 123). Each experiment is repeated once per seed (overriding the config seed) for robustness.",
+    )
+    parser.add_argument(
+        "-b",
+        "--budget",
+        type=int,
+        default=None,
+        help="Override the shared solution budget (n_solutions) for ALL experiments, e.g. 3 to match the true number of solutions (tight budget, no over-selection).",
     )
     args = parser.parse_args()
 
@@ -310,8 +321,9 @@ def main() -> None:
             # with overlapping valid solutions + equal-variance features; the
             # default reproduces the original linear-Gaussian benchmark.
             generator = experiment.get("generator", "linear")
+            planted_supports = None  # set only by the overlap generator
             if generator == "overlap":
-                X, y, true_support, _planted = generate_overlapping_dataset(
+                X, y, true_support, planted_supports = generate_overlapping_dataset(
                     n_samples=ds_params["n_samples"],
                     n_features=ds_params["n_features"],
                     n_solutions=ds_params["n_generating_solutions"],
@@ -342,7 +354,9 @@ def main() -> None:
             # multi-solution method (stress-test config). The legacy keys
             # gemss_n_solutions / alfese_n_solutions are honoured as fallbacks so
             # the original benchmark_config.yaml still reproduces unchanged.
-            shared_budget = experiment.get("n_solutions")
+            # --budget overrides the per-experiment shared budget (e.g. 3 to
+            # match the true solution count -> no over-selection slack).
+            shared_budget = args.budget if args.budget is not None else experiment.get("n_solutions")
             gemss_n_solutions = (
                 shared_budget
                 if shared_budget is not None
@@ -457,12 +471,17 @@ def main() -> None:
                     if not solutions:
                         raise ValueError("Model returned no solutions")
 
-                    # Evaluate
+                    # Evaluate: union metrics always; per-solution structural
+                    # metrics when the planted supports are known (overlap gen).
                     metrics = calculate_metrics(
                         predicted_solutions_dict=solutions,
                         true_support_indices=true_support,
                         p_total=ds_params["n_features"],
                     )
+                    if planted_supports is not None:
+                        metrics.update(
+                            calculate_structural_metrics(solutions, planted_supports)
+                        )
 
                     # Log results
                     entry = {
