@@ -256,12 +256,14 @@ def main() -> None:
         experiments = expanded
         print(f"Seed expansion: {len(seed_list)} seeds -> {len(experiments)} runs")
 
+    # Include PID so concurrent runs (e.g. parallel SLURM jobs submitted in the
+    # same second) never collide on the same output filename.
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     results_log = []
     # Prepare output directory and file for incremental saving
     os.makedirs(config["output_dir"], exist_ok=True)
     output_file = os.path.join(
-        config["output_dir"], f"benchmark_results_{timestamp}.csv"
+        config["output_dir"], f"benchmark_results_{timestamp}_pid{os.getpid()}.csv"
     )
     header_written = False
 
