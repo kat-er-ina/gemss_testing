@@ -68,6 +68,7 @@ algorithm_comparison.src.wrappers : Algorithm wrapper implementations
 
 import os
 import sys
+import copy
 import yaml
 import pandas as pd
 import argparse
@@ -162,6 +163,7 @@ def main() -> None:
         nargs="+",
         default=[
             "GEMSS",
+            "GEMSS_noreg",
             "GEMSS_logistic",
             "GEMSS_single",
             "Masking_lasso",
@@ -180,7 +182,14 @@ def main() -> None:
         "-c",
         "--config",
         default="benchmark_config.yaml",
-        help="Config filename under algorithm_comparison/configs/ (default: benchmark_config.yaml; use stresstest_config.yaml for the fair-budget stress sweep).",
+        help="Config filename under algorithm_comparison/configs/ (default: benchmark_config.yaml; use stresstest_config.yaml / hardtest_config.yaml).",
+    )
+    parser.add_argument(
+        "-s",
+        "--seeds",
+        nargs="+",
+        default=None,
+        help="Optional list of seeds (e.g. 42 7 123). Each experiment is repeated once per seed (overriding the config seed) for robustness.",
     )
     args = parser.parse_args()
 
@@ -218,6 +227,24 @@ def main() -> None:
     else:
         experiments = all_experiments
 
+    # Expand over seeds (robustness): one copy of each experiment per seed.
+    if args.seeds:
+        try:
+            seed_list = [int(s) for s in args.seeds]
+        except ValueError:
+            print(f"ERROR: Seeds must be integers: {args.seeds}")
+            sys.exit(1)
+        expanded = []
+        for exp in experiments:
+            for sd in seed_list:
+                e = copy.deepcopy(exp)
+                e["dataset"] = dict(e["dataset"])
+                e["dataset"]["seed"] = sd
+                e["id"] = f"{exp['id']}_s{sd}"
+                expanded.append(e)
+        experiments = expanded
+        print(f"Seed expansion: {len(seed_list)} seeds -> {len(experiments)} runs")
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     results_log = []
     # Prepare output directory and file for incremental saving
@@ -227,14 +254,14 @@ def main() -> None:
     )
     header_written = False
 
-    # Pre-calculate which methods are available for each experiment
+    # Pre-calculate which methods are available for each experiment.
+    # Keyed by unique id (not exp_number) so seed-expanded copies don't collide.
     experiment_method_map = {}
     for exp in experiments:
         exp_id = exp["id"]
-        exp_number = exp.get("exp_number", "N/A")
         available_methods = [m for m in args.methods if m in exp["methods"].keys()]
         if available_methods:
-            experiment_method_map[exp_number] = available_methods
+            experiment_method_map[exp_id] = available_methods
 
     # Calculate total number of experiment-method combinations for progress tracking
     total_combinations = sum(len(methods) for methods in experiment_method_map.values())
@@ -351,7 +378,7 @@ def main() -> None:
                     t_start = pd.Timestamp.now()
 
                     # Instantiate model
-                    if method_name == "GEMSS":
+                    if method_name in ("GEMSS", "GEMSS_noreg"):
                         model = GEMSSWrapper(
                             task=task_type,
                             n_components=gemss_n_solutions,
