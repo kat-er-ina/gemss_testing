@@ -13,7 +13,6 @@ swap hill-climbing cannot find ~15 features among thousands in <=1000 iters),
 compounded by a tiny held-out split for the MCC quality signal -- not a bug.
 """
 
-import numpy as np
 import pandas as pd
 import alfese
 from sklearn.datasets import make_classification
