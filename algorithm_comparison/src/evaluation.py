@@ -166,25 +166,107 @@ def calculate_structural_metrics(
     core: Set[int] = set.intersection(*planted) if planted else set()
 
     n_p = len(planted)
-    matched = np.zeros(n_p)
+    matched = np.zeros(n_p)          # best-matched Jaccard per planted
+    match_col = [-1] * n_p            # which predicted index each planted matched to
+    prf = np.zeros((n_p, 3))          # per-planted (precision, recall, f1) of matched
+    hamming = np.zeros(n_p)           # |symmetric difference| of matched pair
     if predicted:
         sim = np.array([[_jaccard(p, q) for q in predicted] for p in planted])
         rows, cols = linear_sum_assignment(-sim)  # maximize total Jaccard
         for i, j in zip(rows, cols):
             matched[i] = sim[i, j]
+            match_col[i] = int(j)
+            p_, q_ = planted[i], predicted[j]
+            inter = len(p_ & q_)
+            rec = inter / len(p_) if p_ else 0.0
+            prec = inter / len(q_) if q_ else 0.0
+            f1 = 2 * prec * rec / (prec + rec) if (prec + rec) else 0.0
+            prf[i] = (prec, rec, f1)
+            hamming[i] = len(p_ ^ q_)
 
     preds_with_core = (
         sum(1 for q in predicted if core and core.issubset(q)) if core else 0
     )
 
+    # --- diversity optics (ALFESE/niching speak this) ---
+    def _mean_pairwise_dissim(sets):
+        if len(sets) < 2:
+            return 0.0
+        vals = [1.0 - _jaccard(sets[a], sets[b])
+                for a in range(len(sets)) for b in range(a + 1, len(sets))]
+        return float(np.mean(vals))
+
+    true_dissim = _mean_pairwise_dissim(planted)
+    recovered_dissim = _mean_pairwise_dissim(predicted)
+
+    # --- OVERLAP-STRUCTURE RECOVERY (our specialty metric) ---
+    # Does the recovered set reproduce the planted PAIRWISE overlap structure?
+    # Disjoint methods (masking, ALFESE tau=1) force recovered overlap ~0 regardless
+    # of the truth, so this error grows with the true overlap -- exactly the regime
+    # GEMSS claims to handle. Lower is better; computed over matched solution pairs.
+    errs = []
+    for a in range(n_p):
+        for b in range(a + 1, n_p):
+            ja, jb = match_col[a], match_col[b]
+            if ja >= 0 and jb >= 0:
+                j_true = _jaccard(planted[a], planted[b])
+                j_rec = _jaccard(predicted[ja], predicted[jb])
+                errs.append(abs(j_true - j_rec))
+    overlap_struct_err = float(np.mean(errs)) if errs else float("nan")
+
     return {
         "sol_mean_jaccard": float(matched.mean()) if n_p else 0.0,
+        "sol_precision": float(prf[:, 0].mean()) if n_p else 0.0,
+        "sol_recall": float(prf[:, 1].mean()) if n_p else 0.0,
+        "sol_f1": float(prf[:, 2].mean()) if n_p else 0.0,
+        "sol_hamming": float(hamming.mean()) if n_p else 0.0,
         "sol_recovered_0.8": int((matched >= 0.8).sum()),
         "sol_exact": int((matched >= 0.999).sum()),
         "sol_core_size": len(core),
         "sol_preds_with_core": int(preds_with_core),
+        "true_dissim": true_dissim,
+        "recovered_dissim": recovered_dissim,
+        "overlap_struct_err": overlap_struct_err,
         "n_predicted": len(predicted),
     }
+
+
+def predictive_quality(
+    X, y, predicted_solutions_dict: Dict[str, Dict[str, Any]], task: str = "classification", cv: int = 5
+) -> Dict[str, float]:
+    """Cross-validated predictive quality of each recovered solution (the field's
+    universal currency: ALFESE, SES, predictive-multiplicity all report it).
+
+    Returns mean/best score over solutions (F1 for classification, R^2 for
+    regression). NOTE: on the SYNTHETIC benchmark every planted solution is
+    equally predictive by construction, so this is near-constant there and
+    uninformative about the overlap claim -- it is meant for REAL data (and as a
+    sanity check that recovered sets are usable). Mean-imputes NaNs.
+    """
+    import numpy as _np
+    from sklearn.model_selection import cross_val_score
+    from sklearn.linear_model import LogisticRegression, Ridge
+
+    Xa = _np.asarray(X, dtype=float)
+    if _np.isnan(Xa).any():
+        col_mean = _np.nan_to_num(_np.nanmean(Xa, axis=0))
+        idx = _np.where(_np.isnan(Xa))
+        Xa = Xa.copy(); Xa[idx] = _np.take(col_mean, idx[1])
+    ya = _np.asarray(y).ravel()
+    scores = []
+    for sol in predicted_solutions_dict.values():
+        supp = list(sol.get("support", []))
+        if not supp:
+            continue
+        model = LogisticRegression(max_iter=1000) if task == "classification" else Ridge()
+        scoring = "f1" if task == "classification" else "r2"
+        try:
+            scores.append(float(cross_val_score(model, Xa[:, supp], ya, cv=cv, scoring=scoring).mean()))
+        except Exception:
+            continue
+    if not scores:
+        return {"pred_mean": float("nan"), "pred_best": float("nan")}
+    return {"pred_mean": float(_np.mean(scores)), "pred_best": float(_np.max(scores))}
 
 
 def get_empty_metrics() -> Dict[str, float]:
