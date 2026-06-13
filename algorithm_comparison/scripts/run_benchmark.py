@@ -87,6 +87,7 @@ from src.wrappers.sklearn_wrappers import MaskingWrapper, StabilitySelectionWrap
 from src.evaluation import (
     calculate_metrics,
     calculate_structural_metrics,
+    predictive_quality,
     get_empty_metrics,
 )
 
@@ -484,6 +485,12 @@ def main() -> None:
                         metrics.update(
                             calculate_structural_metrics(solutions, planted_supports)
                         )
+                    # Predictive quality of recovered solutions (field's currency;
+                    # near-constant on synthetic-equivalent data, informative on real).
+                    try:
+                        metrics.update(predictive_quality(X, y, solutions, task_type))
+                    except Exception:
+                        metrics.update({"pred_mean": float("nan"), "pred_best": float("nan")})
 
                     # Log results
                     entry = {
