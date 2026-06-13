@@ -84,6 +84,7 @@ from src.wrappers.gemss_wrapper import GEMSSWrapper
 from src.wrappers.logistic_gemss import LogisticGEMSSWrapper
 from src.wrappers.alfese_wrapper import AlfeseWrapper
 from src.wrappers.sklearn_wrappers import MaskingWrapper, StabilitySelectionWrapper
+from src.wrappers.mechanism_gemss import MechanismGEMSSWrapper
 from src.evaluation import (
     calculate_metrics,
     calculate_structural_metrics,
@@ -171,6 +172,8 @@ def main() -> None:
             "GEMSS_noreg",
             "GEMSS_logistic",
             "GEMSS_single",
+            "GEMSS_kernel",
+            "GEMSS_scalefixed",
             "Masking_lasso",
             "Masking_elasticnet",
             "Masking_logistic",
@@ -395,7 +398,7 @@ def main() -> None:
                     t_start = pd.Timestamp.now()
 
                     # Instantiate model
-                    if method_name in ("GEMSS", "GEMSS_noreg"):
+                    if method_name in ("GEMSS", "GEMSS_noreg", "GEMSS_jaccard"):
                         model = GEMSSWrapper(
                             task=task_type,
                             n_components=gemss_n_solutions,
@@ -422,6 +425,16 @@ def main() -> None:
                             n_components=1,
                             sparsity=desired_sparsity,
                             **single_params,
+                        )
+
+                    elif method_name in ("GEMSS_kernel", "GEMSS_scalefixed"):
+                        mech = "kernel" if method_name.endswith("kernel") else "scalefixed"
+                        model = MechanismGEMSSWrapper(
+                            task=task_type,
+                            mechanism=mech,
+                            n_components=gemss_n_solutions,
+                            sparsity=desired_sparsity,
+                            **method_params,
                         )
 
                     elif method_name.startswith("Masking_"):

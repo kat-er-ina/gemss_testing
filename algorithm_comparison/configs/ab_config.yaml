@@ -1,0 +1,79 @@
+# A/B sweep: fair fixed-defaults comparison on the honest overlap benchmark.
+# ==========================================================================
+# Protocol (decided from diagnostics, all methods treated identically):
+#  * FIXED regime-level defaults for every method (no per-problem tuning) -> the
+#    overlap advantage rides on the MECHANISM, not on tuning (which cannot target
+#    the overlap specialty anyway: ELBO/CV correlate with F1 but not overlap_err).
+#  * GEMSS prior retuned for unit-variance data (var_slab 32, var_spike 0.1,
+#    lr 0.01, n_iter 6000), lambda_jaccard 0 (the Jaccard penalty backfires on
+#    overlap; repulsion is the parameter-space replacement).
+#  * Equal solution budget n_solutions=6, sparsity=5, latent_rank=2.
+#  * Generator = overlap (equal-variance, genuinely overlapping supports).
+#  * Metrics emitted: union F1/recall/precision; per-solution F1/precision/recall
+#    + Hamming (SES); recovered_dissim vs true_dissim + overlap_struct_err (our
+#    specialty); pred_mean/pred_best (sanity; ~flat on synthetic by design).
+#
+# A (task): GEMSS variants vs validated baselines (masking, stability, ALFESE).
+# B (mechanism): GEMSS joint vs kernel-repulsion vs scale_fixed (+ logistic).
+# Tempering is excluded (unvalidated).
+
+output_dir: "results/"
+experiment_name: "GEMSS_ab"
+
+_anchors:
+  gemss: &gemss
+    batch_size: 16
+    n_iter: 6000
+    prior: "sss"
+    var_slab: 32.0
+    var_spike: 0.1
+    lr: 0.01
+    weight_slab: 0.9
+    weight_spike: 0.1
+    student_df: 1
+    student_scale: 1.0
+  gemss_reg: &gemss_reg
+    lambda_jaccard: 1000
+    regularize: true
+    batch_size: 16
+    n_iter: 6000
+    prior: "sss"
+    var_slab: 32.0
+    var_spike: 0.1
+    lr: 0.01
+    weight_slab: 0.9
+    weight_spike: 0.1
+    student_df: 1
+    student_scale: 1.0
+  methods_clf: &methods_clf
+    GEMSS_logistic: *gemss
+    GEMSS_kernel: {kernel_gamma: 1000.0, prior: "sss", var_slab: 32.0, var_spike: 0.1, lr: 0.01, n_iter: 6000, batch_size: 16, weight_slab: 0.9, weight_spike: 0.1, student_df: 1, student_scale: 1.0}
+    GEMSS_scalefixed: {scale_lo: 0.02, scale_hi: 2.0, prior: "sss", var_spike: 0.1, lr: 0.01, n_iter: 6000, batch_size: 16, weight_slab: 0.9, weight_spike: 0.1, student_df: 1, student_scale: 1.0}
+    GEMSS: *gemss
+    GEMSS_jaccard: *gemss_reg
+    Masking_lasso: {estimator: "lasso", alpha: 0.05}
+    Masking_logistic: {estimator: "logistic", alpha: 0.05}
+    StabilitySelection: {alpha: 0.05, n_bootstrap: 100, threshold: 0.6}
+    ALFESE_mi_tau1.0: {selector_type: "mi", tau: 1.0}
+    ALFESE_importance_tau1.0: {selector_type: "importance", tau: 1.0}
+
+experiments:
+  # overlap sweep at two dimensionalities (p=200 moderate, p=500 collapse-prone)
+  - {id: "ab_ov0_p200", exp_number: 1, description: "A/B overlap=0 p=200", generator: overlap,
+     dataset: {n_samples: 100, n_features: 200, n_generating_solutions: 3, sparsity: 5, latent_rank: 2, overlap: 0, noise_std: 0.05, nan_ratio: 0.0, binarize: true, binary_response_ratio: 0.5, seed: 42},
+     n_solutions: 6, desired_sparsity: 5, methods: *methods_clf}
+  - {id: "ab_ov2_p200", exp_number: 2, description: "A/B overlap=2 p=200", generator: overlap,
+     dataset: {n_samples: 100, n_features: 200, n_generating_solutions: 3, sparsity: 5, latent_rank: 2, overlap: 2, noise_std: 0.05, nan_ratio: 0.0, binarize: true, binary_response_ratio: 0.5, seed: 42},
+     n_solutions: 6, desired_sparsity: 5, methods: *methods_clf}
+  - {id: "ab_ov4_p200", exp_number: 3, description: "A/B overlap=4 p=200", generator: overlap,
+     dataset: {n_samples: 100, n_features: 200, n_generating_solutions: 3, sparsity: 5, latent_rank: 2, overlap: 4, noise_std: 0.05, nan_ratio: 0.0, binarize: true, binary_response_ratio: 0.5, seed: 42},
+     n_solutions: 6, desired_sparsity: 5, methods: *methods_clf}
+  - {id: "ab_ov0_p500", exp_number: 4, description: "A/B overlap=0 p=500", generator: overlap,
+     dataset: {n_samples: 100, n_features: 500, n_generating_solutions: 3, sparsity: 5, latent_rank: 2, overlap: 0, noise_std: 0.05, nan_ratio: 0.0, binarize: true, binary_response_ratio: 0.5, seed: 42},
+     n_solutions: 6, desired_sparsity: 5, methods: *methods_clf}
+  - {id: "ab_ov2_p500", exp_number: 5, description: "A/B overlap=2 p=500", generator: overlap,
+     dataset: {n_samples: 100, n_features: 500, n_generating_solutions: 3, sparsity: 5, latent_rank: 2, overlap: 2, noise_std: 0.05, nan_ratio: 0.0, binarize: true, binary_response_ratio: 0.5, seed: 42},
+     n_solutions: 6, desired_sparsity: 5, methods: *methods_clf}
+  - {id: "ab_ov4_p500", exp_number: 6, description: "A/B overlap=4 p=500", generator: overlap,
+     dataset: {n_samples: 100, n_features: 500, n_generating_solutions: 3, sparsity: 5, latent_rank: 2, overlap: 4, noise_std: 0.05, nan_ratio: 0.0, binarize: true, binary_response_ratio: 0.5, seed: 42},
+     n_solutions: 6, desired_sparsity: 5, methods: *methods_clf}
