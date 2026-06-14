@@ -46,6 +46,7 @@ from src.wrappers.sklearn_wrappers import (
     RandomizedLassoEnsembleWrapper,
 )
 from src.wrappers.alfese_wrapper import AlfeseWrapper
+from src.wrappers.enumlasso_wrapper import EnumLassoWrapper
 from src.evaluation import predictive_quality, _jaccard
 
 DATA_GLOB = os.path.join(os.path.dirname(__file__), "..", "..", "..",
@@ -75,6 +76,7 @@ def factories(K, D):
         "GEMSS_scalefixed": lambda: MechanismGEMSSWrapper("classification", "scalefixed", K, D, **sf_hp),
         "Masking_logistic": lambda: MaskingWrapper("logistic", K, D, "classification", alpha=0.05),
         "RandLasso_ensemble": lambda: RandomizedLassoEnsembleWrapper(n_solutions=K, sparsity=D, task="classification", alpha=0.05, n_restarts=300),
+        "EnumLasso": lambda: EnumLassoWrapper(n_solutions=K, sparsity=D, task="classification", rho=0.02),
         "StabilitySelection": lambda: StabilitySelectionWrapper(sparsity=D, task="classification", alpha=0.05),
         "ALFESE_mi": lambda: AlfeseWrapper(n_solutions=K, task="classification", selector_type="mi", tau=1.0, k=D),
     }
