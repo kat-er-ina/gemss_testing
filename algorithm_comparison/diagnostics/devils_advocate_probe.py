@@ -30,7 +30,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
 from src.hard_data_factory import generate_overlapping_dataset
 from src.wrappers.mechanism_gemss import MechanismGEMSSWrapper
-from src.evaluation import calculate_metrics, calculate_structural_metrics
+from src.evaluation import calculate_structural_metrics
 
 GEMSS_HP = dict(prior="sss", var_slab=32.0, var_spike=0.1, lr=0.01, n_iter=6000,
                 batch_size=16, weight_slab=0.9, weight_spike=0.1)

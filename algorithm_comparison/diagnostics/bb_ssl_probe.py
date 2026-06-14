@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from sklearn.cluster import AgglomerativeClustering
 from src.hard_data_factory import generate_overlapping_dataset
 from src.wrappers.mechanism_gemss import MechanismGEMSSWrapper
-from src.evaluation import calculate_structural_metrics, calculate_metrics, _jaccard
+from src.evaluation import calculate_structural_metrics
 
 BRIDGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bb_ssl_bridge.R")
 GEMSS_HP = dict(prior="sss", var_spike=0.1, lr=0.01, n_iter=6000, batch_size=16,

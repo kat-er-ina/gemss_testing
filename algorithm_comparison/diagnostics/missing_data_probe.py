@@ -19,7 +19,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sklearn.experimental import enable_iterative_imputer  # noqa: F401
-from sklearn.impute import IterativeImputer, SimpleImputer
+from sklearn.impute import IterativeImputer
 from src.hard_data_factory import generate_overlapping_dataset
 from src.wrappers.mechanism_gemss import MechanismGEMSSWrapper
 from src.wrappers.sklearn_wrappers import RandomizedLassoEnsembleWrapper

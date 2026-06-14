@@ -27,7 +27,6 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from gemss.feature_selection.inference import BayesianFeatureSelector
 from src.wrappers.logistic_gemss import LogisticBayesianFeatureSelector
 from src.wrappers.sklearn_wrappers import RandomizedLassoEnsembleWrapper
 from src.hard_data_factory import generate_overlapping_dataset
@@ -82,7 +81,7 @@ def main():
     ap.add_argument("--seeds", nargs="+", type=int, default=[42, 7, 123])
     args = ap.parse_args()
 
-    print(f"How-many-solutions signal: GEMSS alpha-perplexity & #distinct vs true count.")
+    print("How-many-solutions signal: GEMSS alpha-perplexity & #distinct vs true count.")
     print(f"Generous budget K={args.K}. mean over seeds={args.seeds}.\n")
     print(f"  {'data':8s} {'true#':>5s} | {'GEMSS alpha-perplex':>19s} {'GEMSS #distinct':>15s} | {'ens #returned':>13s} {'ens #real':>9s}")
     truecount = {"UNIQUE": 1, "FEW": 2, "MANY": 4}

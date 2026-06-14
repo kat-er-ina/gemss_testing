@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from sklearn.preprocessing import StandardScaler
 from src.wrappers.mechanism_gemss import MechanismGEMSSWrapper
 from src.wrappers.sklearn_wrappers import RandomizedLassoEnsembleWrapper
-from src.evaluation import calculate_metrics, _jaccard
+from src.evaluation import calculate_metrics
 
 GEMSS_HP = dict(prior="sss", var_slab=32.0, var_spike=0.1, lr=0.01, n_iter=6000,
                 batch_size=16, weight_slab=0.9, weight_spike=0.1)
