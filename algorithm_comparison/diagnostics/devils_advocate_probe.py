@@ -44,19 +44,24 @@ def lasso_support(Xs, y, D, alpha, seed):
     return tuple(sorted(int(i) for i in np.argsort(coef)[::-1][:D]))
 
 
-def bootstrap_ensemble(X, y, D, m, budget_sec, alpha=0.05, seed=0):
+def bootstrap_ensemble(X, y, D, m, budget_sec, alpha=0.05, seed=0, randomized=False, wmin=0.2):
     """Fit L1-logistic on bootstrap subsamples until budget_sec is spent; return
-    the top-m most-frequent distinct supports + all-feature union + #distinct + B."""
+    the top-m most-frequent distinct supports + all-feature union + #distinct + B.
+    randomized=True -> Meinshausen-Buhlmann randomised lasso (per-restart random
+    feature reweighting), the stronger restart-oriented cheap competitor."""
     rng = np.random.default_rng(seed)
     Xs = np.nan_to_num(StandardScaler().fit_transform(np.nan_to_num(X)))
-    n = Xs.shape[0]
+    n, p = Xs.shape
     supports = []
     t0 = time.time()
     b = 0
     while time.time() - t0 < budget_sec:
         idx = rng.choice(n, size=n, replace=True)  # bootstrap
+        Xb = Xs[idx]
+        if randomized:
+            Xb = Xb * rng.uniform(wmin, 1.0, size=p)  # random penalty reweighting
         try:
-            supports.append(lasso_support(Xs[idx], y[idx], D, alpha, seed + b))
+            supports.append(lasso_support(Xb, y[idx], D, alpha, seed + b))
         except Exception:
             pass
         b += 1
@@ -91,53 +96,56 @@ def _cluster_consensus(supports, p, m, D):
     return out
 
 
+def _best_ensemble(X, y, planted, D, K, budget, seed, randomized):
+    """Ensemble's BEST-sol_f1 extraction; return (sol_f1, overlap_err, ndist)."""
+    top, clustered, union, ndist, B = bootstrap_ensemble(
+        X, y, D, K, budget_sec=budget, seed=seed, randomized=randomized)
+    best_f1, best_err = 0.0, float("nan")
+    for cand in (top, clustered):
+        sol = {f"s{i}": {"support": list(s)} for i, s in enumerate(cand)}
+        m = calculate_structural_metrics(sol, planted)
+        if m["sol_f1"] >= best_f1:
+            best_f1, best_err = m["sol_f1"], m["overlap_struct_err"]
+    return best_f1, best_err, ndist
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--p", type=int, default=200)
-    ap.add_argument("--n", type=int, default=100)
-    ap.add_argument("--overlaps", nargs="+", type=int, default=[0, 2, 4])
-    ap.add_argument("--seeds", nargs="+", type=int, default=[42, 7])
+    ap.add_argument("--seeds", nargs="+", type=int, default=[42, 7, 123])
     ap.add_argument("--K", type=int, default=6)
     ap.add_argument("--D", type=int, default=5)
     args = ap.parse_args()
 
-    print(f"Compute-matched: GEMSS (1 run) vs Bootstrap-Lasso ensemble (same wall-clock).")
-    print(f"p={args.p} n={args.n} | mean over seeds={args.seeds}")
-    for ov in args.overlaps:
-        gm = {"f1": [], "solf1": [], "err": [], "t": []}
-        bl = {"f1": [], "solf1": [], "err": [], "t": [], "B": [], "ndist": []}
+    # Regime sweep from EASY (n>>p, high SNR) to HARD (n<<p) at fixed overlap=2.
+    # noise_std is the inverse-SNR knob. Each row: (label, n, p, noise, overlap)
+    regimes = [
+        ("n=p",               150, 150, 0.05, 2),
+        ("n<p",               100, 200, 0.05, 2),
+        ("n<<p (GEMSS turf)", 60, 300, 0.05, 2),
+    ]
+    # GEMSS uses its RECOMMENDED high-p config (scale_fixed anti-collapse), and we
+    # report BOTH sol_f1 and overlap_struct_err vs the strongest cheap competitor
+    # (randomised Lasso). sf_hp drops var_slab (frozen ladder sets variance).
+    sf_hp = {k: v for k, v in GEMSS_HP.items() if k != "var_slab"}
+    print("FAIR re-run: GEMSS=scale_fixed (recommended high-p config) vs Randomised-Lasso")
+    print(f"(compute-matched, best extraction). overlap=2, mean over seeds={args.seeds}.\n")
+    print(f"  {'regime':18s} {'n':>4s} {'p':>4s} | {'GEMSS f1':>8s} {'err':>5s} | {'RandL f1':>8s} {'err':>5s} {'ndist':>6s}")
+    for label, n, p, noise, ov in regimes:
+        gf, ge, rf, re_, nd = [], [], [], [], []
         for sd in args.seeds:
             X, y, truth, planted = generate_overlapping_dataset(
-                n_samples=args.n, n_features=args.p, n_solutions=3, sparsity=args.D,
-                latent_rank=2, overlap=ov, noise_std=0.05, binarize=True,
+                n_samples=n, n_features=p, n_solutions=3, sparsity=args.D,
+                latent_rank=2, overlap=ov, noise_std=noise, binarize=True,
                 standardize=True, seed=sd)
-            # GEMSS (default)
             t = time.time()
-            gsol = MechanismGEMSSWrapper("classification", "joint", args.K, args.D, **GEMSS_HP).fit(X, y)
+            gsol = MechanismGEMSSWrapper("classification", "scalefixed", args.K, args.D, **sf_hp).fit(X, y)
             gt = time.time() - t
-            gm["t"].append(gt)
-            gm["f1"].append(calculate_metrics(gsol, truth, args.p)["F1_Score"])
-            gs = calculate_structural_metrics(gsol, planted)
-            gm["solf1"].append(gs["sol_f1"]); gm["err"].append(gs["overlap_struct_err"])
-            # Bootstrap-Lasso ensemble with the SAME wall-clock budget
-            t = time.time()
-            top, clustered, union, ndist, B = bootstrap_ensemble(X, y, args.D, args.K, budget_sec=gt, seed=sd)
-            bt = time.time() - t
-            bl["t"].append(bt); bl["B"].append(B); bl["ndist"].append(ndist)
-            esol = {f"s{i}": {"support": list(s)} for i, s in enumerate(top)}
-            bl["f1"].append(calculate_metrics(esol, truth, args.p)["F1_Score"])
-            es = calculate_structural_metrics(esol, planted)
-            bl["solf1"].append(es["sol_f1"]); bl["err"].append(es["overlap_struct_err"])
-            csol = {f"c{i}": {"support": list(s)} for i, s in enumerate(clustered)}
-            cs = calculate_structural_metrics(csol, planted)
-            bl.setdefault("csolf1", []).append(cs["sol_f1"])
-            bl.setdefault("cerr", []).append(cs["overlap_struct_err"])
-            bl.setdefault("cf1", []).append(calculate_metrics(csol, truth, args.p)["F1_Score"])
-        mu = lambda d, k: float(np.mean(d[k]))
-        print(f"\n--- overlap={ov} ---")
-        print(f"  GEMSS:            unionF1={mu(gm,'f1'):.2f} sol_f1={mu(gm,'solf1'):.2f} overlap_err={mu(gm,'err'):.2f}  time={mu(gm,'t'):.1f}s")
-        print(f"  BootLasso top-m:  unionF1={mu(bl,'f1'):.2f} sol_f1={mu(bl,'solf1'):.2f} overlap_err={mu(bl,'err'):.2f}  time={mu(bl,'t'):.1f}s  (B={mu(bl,'B'):.0f}, {mu(bl,'ndist'):.0f} distinct)")
-        print(f"  BootLasso clust:  unionF1={mu(bl,'cf1'):.2f} sol_f1={mu(bl,'csolf1'):.2f} overlap_err={mu(bl,'cerr'):.2f}  (m-cluster consensus)")
+            gm = calculate_structural_metrics(gsol, planted)
+            gf.append(gm["sol_f1"]); ge.append(gm["overlap_struct_err"])
+            f1, err, ndist = _best_ensemble(X, y, planted, args.D, args.K, gt, sd, True)
+            rf.append(f1); re_.append(err); nd.append(ndist)
+        print(f"  {label:18s} {n:>4d} {p:>4d} | {np.mean(gf):8.2f} {np.nanmean(ge):5.2f} | "
+              f"{np.mean(rf):8.2f} {np.nanmean(re_):5.2f} {np.mean(nd):6.0f}")
 
 
 if __name__ == "__main__":
