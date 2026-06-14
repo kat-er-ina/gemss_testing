@@ -12,7 +12,9 @@ outf <- args[3]
 lambda0 <- as.numeric(args[4]); lambda1 <- as.numeric(args[5])
 NSample <- as.integer(args[6]); alpha <- as.numeric(args[7])
 p <- ncol(X)
+y <- (y - mean(y)) / sd(y)   # standardize response so sigma=1 / lambda are calibrated
 res <- BB_SSL(y, X, method = 3, lambda = c(lambda0, lambda1), NSample = NSample,
               a = 1, b = p, maxiter = 500, length.out = 50, burn.in = FALSE,
               discard = TRUE, alpha = alpha, initial.beta = rep(0, p))
 write.table(res$beta, outf, sep = ",", row.names = FALSE, col.names = FALSE)
+write.table(res$gamma, paste0(outf, ".g"), sep = ",", row.names = FALSE, col.names = FALSE)

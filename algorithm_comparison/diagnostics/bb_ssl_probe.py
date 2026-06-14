@@ -60,8 +60,18 @@ def run_bbssl(X, y, D, m, lambda0, lambda1, nsample=200, alpha=1.0):
         if not os.path.exists(of):
             raise RuntimeError("BB-SSL failed: " + r.stderr[-400:])
         beta = np.atleast_2d(np.loadtxt(of, delimiter=","))
-    supports = [tuple(sorted(int(j) for j in np.argsort(np.abs(b))[::-1][:D] if abs(b[int(j)]) > 0))
-                for b in beta]
+        gamma = np.atleast_2d(np.loadtxt(of + ".g", delimiter=",")) if os.path.exists(of + ".g") else None
+    supports = []
+    for i, bb in enumerate(beta):
+        if gamma is not None:
+            active = np.where(gamma[i] < 0.5)[0]  # gamma is the SPIKE indicator; slab/included = <0.5
+        else:
+            active = np.where(np.abs(bb) > 0)[0]
+        if active.size == 0:
+            continue
+        # rank active features by |beta|, keep up to D (the per-solution budget)
+        order = active[np.argsort(np.abs(bb[active]))[::-1]][:D]
+        supports.append(tuple(sorted(int(j) for j in order)))
     supports = [s for s in supports if s]
     clustered = cluster_to_m(supports, X.shape[1], m, D)
     return {f"s{i}": {"support": list(s)} for i, s in enumerate(clustered)}, len(set(supports))
