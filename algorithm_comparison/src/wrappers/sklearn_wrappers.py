@@ -154,6 +154,72 @@ class MaskingWrapper(ModelWrapper):
         return results
 
 
+class RandomizedLassoEnsembleWrapper(ModelWrapper):
+    """Strong cheap baseline: Meinshausen-Buhlmann randomised Lasso run as a
+    bootstrap ensemble, then CLUSTERED into m consensus solutions.
+
+    The devil's-advocate competitor to GEMSS: for ``n_restarts`` bootstraps, fit
+    L1-logistic with random per-restart feature reweighting, take the top-D
+    support; agglomerative-cluster the support cloud (Jaccard) into ``n_solutions``
+    groups and return each cluster's top-D consensus features. Returns m solutions
+    like GEMSS, cheaply -- the test is whether they are *all* predictive.
+    """
+
+    def __init__(self, n_solutions: int = 6, sparsity: int = 5, task: str = "classification",
+                 alpha: float = 0.05, n_restarts: int = 300, wmin: float = 0.2,
+                 seed: int = 42, **kwargs: Any) -> None:
+        self.n_solutions = n_solutions
+        self.sparsity = sparsity
+        self.task = task
+        self.alpha = alpha
+        self.n_restarts = n_restarts
+        self.wmin = wmin
+        self.seed = seed
+
+    def fit(self, X: np.ndarray, y: np.ndarray) -> Dict[str, Dict[str, List[int]]]:
+        from collections import Counter
+        from sklearn.cluster import AgglomerativeClustering
+
+        Xs = _prepare(X)
+        y = np.asarray(y).ravel()
+        rng = np.random.default_rng(self.seed)
+        n, p = Xs.shape
+        supports = []
+        for b in range(self.n_restarts):
+            idx = rng.choice(n, size=n, replace=True)
+            Xb = Xs[idx] * rng.uniform(self.wmin, 1.0, size=p)
+            model = _make_estimator(self.estimator, self.task, self.alpha, self.seed + b)
+            try:
+                model.fit(Xb, y[idx])
+            except Exception:
+                continue
+            mag = _coef_magnitudes(model, p)
+            supports.append(tuple(sorted(int(i) for i in np.argsort(mag)[::-1][: self.sparsity])))
+        uniq = list(set(supports))
+        if not uniq:
+            return {"solution_0": {"support": []}}
+        if len(uniq) <= self.n_solutions:
+            return {f"solution_{i}": {"support": list(s)} for i, s in enumerate(uniq)}
+        M = np.zeros((len(uniq), p))
+        for i, s in enumerate(uniq):
+            M[i, list(s)] = 1.0
+        try:
+            lab = AgglomerativeClustering(n_clusters=self.n_solutions, metric="jaccard",
+                                          linkage="average").fit_predict(M)
+        except Exception:
+            lab = AgglomerativeClustering(n_clusters=self.n_solutions).fit_predict(M)
+        results = {}
+        for c in range(self.n_solutions):
+            members = [uniq[i] for i in range(len(uniq)) if lab[i] == c]
+            if not members:
+                continue
+            cnt = Counter(f for s in members for f in s)
+            results[f"solution_{c}"] = {"support": [f for f, _ in cnt.most_common(self.sparsity)]}
+        return results or {"solution_0": {"support": list(uniq[0])}}
+
+    estimator = "logistic"
+
+
 class StabilitySelectionWrapper(ModelWrapper):
     """Meinshausen-Buhlmann stability selection -> a single stable core.
 

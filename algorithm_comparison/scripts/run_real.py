@@ -40,7 +40,11 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import f1_score
 
 from src.wrappers.mechanism_gemss import MechanismGEMSSWrapper
-from src.wrappers.sklearn_wrappers import MaskingWrapper, StabilitySelectionWrapper
+from src.wrappers.sklearn_wrappers import (
+    MaskingWrapper,
+    StabilitySelectionWrapper,
+    RandomizedLassoEnsembleWrapper,
+)
 from src.wrappers.alfese_wrapper import AlfeseWrapper
 from src.evaluation import predictive_quality, _jaccard
 
@@ -70,6 +74,7 @@ def factories(K, D):
         "GEMSS_kernel": lambda: MechanismGEMSSWrapper("classification", "kernel", K, D, kernel_gamma=100.0, **GEMSS_HP),
         "GEMSS_scalefixed": lambda: MechanismGEMSSWrapper("classification", "scalefixed", K, D, **sf_hp),
         "Masking_logistic": lambda: MaskingWrapper("logistic", K, D, "classification", alpha=0.05),
+        "RandLasso_ensemble": lambda: RandomizedLassoEnsembleWrapper(n_solutions=K, sparsity=D, task="classification", alpha=0.05, n_restarts=300),
         "StabilitySelection": lambda: StabilitySelectionWrapper(sparsity=D, task="classification", alpha=0.05),
         "ALFESE_mi": lambda: AlfeseWrapper(n_solutions=K, task="classification", selector_type="mi", tau=1.0, k=D),
     }
