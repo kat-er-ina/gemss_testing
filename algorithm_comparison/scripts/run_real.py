@@ -49,6 +49,25 @@ from src.wrappers.alfese_wrapper import AlfeseWrapper
 from src.wrappers.enumlasso_wrapper import EnumLassoWrapper
 from src.evaluation import predictive_quality, _jaccard
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "diagnostics"))
+
+
+class BBSSLAdapter:
+    """Instance B (posterior bootstrap) as a .fit()-compatible wrapper. BB-SSL is
+    a Gaussian-regression spike-and-slab sampler, so on classification data it is
+    applied as a linear-probability model (regression on 0/1) -- the same way
+    GEMSS's L2 core treats classification. Needs R + BBSSL via the bridge."""
+
+    def __init__(self, K, D, lambda0=50.0, lambda1=0.5, nsample=200):
+        self.K, self.D = K, D
+        self.lambda0, self.lambda1, self.nsample = lambda0, lambda1, nsample
+
+    def fit(self, X, y):
+        from bb_ssl_probe import run_bbssl
+        sols, _ = run_bbssl(X, np.asarray(y, dtype=float), self.D, self.K,
+                            self.lambda0, self.lambda1, self.nsample)
+        return sols
+
 DATA_GLOB = os.path.join(os.path.dirname(__file__), "..", "..", "..",
                          "gemss", "data", "preprocessed_datasets", "*.csv")
 
@@ -75,6 +94,7 @@ def factories(K, D):
         "GEMSS_kernel": lambda: MechanismGEMSSWrapper("classification", "kernel", K, D, kernel_gamma=100.0, **GEMSS_HP),
         "GEMSS_scalefixed": lambda: MechanismGEMSSWrapper("classification", "scalefixed", K, D, **sf_hp),
         "Masking_logistic": lambda: MaskingWrapper("logistic", K, D, "classification", alpha=0.05),
+        "BBSSL": lambda: BBSSLAdapter(K, D),
         "RandLasso_ensemble": lambda: RandomizedLassoEnsembleWrapper(n_solutions=K, sparsity=D, task="classification", alpha=0.05, n_restarts=300),
         "EnumLasso": lambda: EnumLassoWrapper(n_solutions=K, sparsity=D, task="classification", rho=0.02),
         "StabilitySelection": lambda: StabilitySelectionWrapper(sparsity=D, task="classification", alpha=0.05),
