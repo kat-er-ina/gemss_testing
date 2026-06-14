@@ -47,7 +47,7 @@ _anchors:
     student_scale: 1.0
   methods_clf: &methods_clf
     GEMSS_logistic: *gemss
-    GEMSS_kernel: {kernel_gamma: 1000.0, prior: "sss", var_slab: 32.0, var_spike: 0.1, lr: 0.01, n_iter: 6000, batch_size: 16, weight_slab: 0.9, weight_spike: 0.1, student_df: 1, student_scale: 1.0}
+    GEMSS_kernel: {kernel_gamma: 100.0, prior: "sss", var_slab: 32.0, var_spike: 0.1, lr: 0.01, n_iter: 6000, batch_size: 16, weight_slab: 0.9, weight_spike: 0.1, student_df: 1, student_scale: 1.0}
     GEMSS_scalefixed: {scale_lo: 0.02, scale_hi: 2.0, prior: "sss", var_spike: 0.1, lr: 0.01, n_iter: 6000, batch_size: 16, weight_slab: 0.9, weight_spike: 0.1, student_df: 1, student_scale: 1.0}
     GEMSS: *gemss
     GEMSS_jaccard: *gemss_reg

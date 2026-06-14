@@ -1,0 +1,57 @@
+# Stress-robustness sweep: does GEMSS's overlap-recovery advantage survive
+# adversity (noise, missing data, class imbalance)? Fixed overlap=2, p=200, and
+# the same fair fixed-defaults protocol + metrics as ab_config. Missing-data rows
+# also exercise GEMSS's NATIVE NaN handling vs baselines' mean-imputation.
+
+output_dir: "results/"
+experiment_name: "GEMSS_stress"
+
+_anchors:
+  gemss: &gemss
+    batch_size: 16
+    n_iter: 6000
+    prior: "sss"
+    var_slab: 32.0
+    var_spike: 0.1
+    lr: 0.01
+    weight_slab: 0.9
+    weight_spike: 0.1
+    student_df: 1
+    student_scale: 1.0
+  methods_clf: &methods_clf
+    GEMSS_logistic: *gemss
+    GEMSS_kernel: {kernel_gamma: 100.0, prior: "sss", var_slab: 32.0, var_spike: 0.1, lr: 0.01, n_iter: 6000, batch_size: 16, weight_slab: 0.9, weight_spike: 0.1, student_df: 1, student_scale: 1.0}
+    GEMSS_scalefixed: {scale_lo: 0.02, scale_hi: 2.0, prior: "sss", var_spike: 0.1, lr: 0.01, n_iter: 6000, batch_size: 16, weight_slab: 0.9, weight_spike: 0.1, student_df: 1, student_scale: 1.0}
+    GEMSS: *gemss
+    Masking_lasso: {estimator: "lasso", alpha: 0.05}
+    Masking_logistic: {estimator: "logistic", alpha: 0.05}
+    StabilitySelection: {alpha: 0.05, n_bootstrap: 100, threshold: 0.6}
+    ALFESE_mi_tau1.0: {selector_type: "mi", tau: 1.0}
+    ALFESE_importance_tau1.0: {selector_type: "importance", tau: 1.0}
+
+experiments:
+  # --- noise axis (overlap=2, p=200) ---
+  - {id: "st_noise0.25", exp_number: 1, description: "noise std 0.25", generator: overlap,
+     dataset: {n_samples: 100, n_features: 200, n_generating_solutions: 3, sparsity: 5, latent_rank: 2, overlap: 2, noise_std: 0.25, nan_ratio: 0.0, binarize: true, binary_response_ratio: 0.5, seed: 42},
+     n_solutions: 6, desired_sparsity: 5, methods: *methods_clf}
+  - {id: "st_noise0.5", exp_number: 2, description: "noise std 0.5", generator: overlap,
+     dataset: {n_samples: 100, n_features: 200, n_generating_solutions: 3, sparsity: 5, latent_rank: 2, overlap: 2, noise_std: 0.5, nan_ratio: 0.0, binarize: true, binary_response_ratio: 0.5, seed: 42},
+     n_solutions: 6, desired_sparsity: 5, methods: *methods_clf}
+  # --- missing-data axis (native NaN for GEMSS vs imputation for baselines) ---
+  - {id: "st_nan0.1", exp_number: 3, description: "missing 10%", generator: overlap,
+     dataset: {n_samples: 100, n_features: 200, n_generating_solutions: 3, sparsity: 5, latent_rank: 2, overlap: 2, noise_std: 0.05, nan_ratio: 0.1, binarize: true, binary_response_ratio: 0.5, seed: 42},
+     n_solutions: 6, desired_sparsity: 5, methods: *methods_clf}
+  - {id: "st_nan0.3", exp_number: 4, description: "missing 30%", generator: overlap,
+     dataset: {n_samples: 100, n_features: 200, n_generating_solutions: 3, sparsity: 5, latent_rank: 2, overlap: 2, noise_std: 0.05, nan_ratio: 0.3, binarize: true, binary_response_ratio: 0.5, seed: 42},
+     n_solutions: 6, desired_sparsity: 5, methods: *methods_clf}
+  # --- combined noise + missing ---
+  - {id: "st_noise0.25_nan0.3", exp_number: 5, description: "noise 0.25 + missing 30%", generator: overlap,
+     dataset: {n_samples: 100, n_features: 200, n_generating_solutions: 3, sparsity: 5, latent_rank: 2, overlap: 2, noise_std: 0.25, nan_ratio: 0.3, binarize: true, binary_response_ratio: 0.5, seed: 42},
+     n_solutions: 6, desired_sparsity: 5, methods: *methods_clf}
+  # --- class imbalance axis ---
+  - {id: "st_imb0.2", exp_number: 6, description: "minority 20%", generator: overlap,
+     dataset: {n_samples: 100, n_features: 200, n_generating_solutions: 3, sparsity: 5, latent_rank: 2, overlap: 2, noise_std: 0.05, nan_ratio: 0.0, binarize: true, binary_response_ratio: 0.2, seed: 42},
+     n_solutions: 6, desired_sparsity: 5, methods: *methods_clf}
+  - {id: "st_imb0.1", exp_number: 7, description: "minority 10%", generator: overlap,
+     dataset: {n_samples: 100, n_features: 200, n_generating_solutions: 3, sparsity: 5, latent_rank: 2, overlap: 2, noise_std: 0.05, nan_ratio: 0.0, binarize: true, binary_response_ratio: 0.1, seed: 42},
+     n_solutions: 6, desired_sparsity: 5, methods: *methods_clf}
