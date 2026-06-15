@@ -38,8 +38,14 @@ def main():
 
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     rows = []
+    # Incremental write: header now, append each (l0,l1,ov) row as soon as it is
+    # done, so a SLURM timeout still leaves all completed rows on disk.
+    fcsv = open(args.out, "w", newline="")
+    writer = csv.DictWriter(fcsv, fieldnames=["lambda0", "lambda1", "overlap",
+                                              "sol_f1", "overlap_struct_err", "cloud"])
+    writer.writeheader(); fcsv.flush()
     print(f"BB-SSL fair-tuning: lambda0={args.lambda0} lambda1={args.lambda1} "
-          f"overlaps={args.overlaps} seeds={args.seeds}")
+          f"overlaps={args.overlaps} seeds={args.seeds}", flush=True)
     for l0 in args.lambda0:
         for l1 in args.lambda1:
             if l1 >= l0:
@@ -57,20 +63,18 @@ def main():
                         f1s.append(m["sol_f1"]); errs.append(m["overlap_struct_err"])
                         nds.append(ndist)
                     except Exception as e:
-                        print(f"  l0={l0} l1={l1} ov={ov} sd={sd} ERR {str(e)[:100]}")
+                        print(f"  l0={l0} l1={l1} ov={ov} sd={sd} ERR {str(e)[:100]}", flush=True)
                 if f1s:
-                    rows.append(dict(lambda0=l0, lambda1=l1, overlap=ov,
-                                     sol_f1=np.mean(f1s),
-                                     overlap_struct_err=np.nanmean(errs),
-                                     cloud=np.mean(nds)))
+                    row = dict(lambda0=l0, lambda1=l1, overlap=ov,
+                               sol_f1=np.mean(f1s), overlap_struct_err=np.nanmean(errs),
+                               cloud=np.mean(nds))
+                    rows.append(row)
+                    writer.writerow(row); fcsv.flush()
                     print(f"  l0={l0:6.1f} l1={l1:4.1f} ov={ov} -> "
                           f"sol_f1={np.mean(f1s):.3f} err={np.nanmean(errs):.3f} "
-                          f"cloud={np.mean(nds):.0f}")
-
-    with open(args.out, "w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
-        w.writeheader(); w.writerows(rows)
-    print(f"\n[*] wrote {len(rows)} rows -> {args.out}")
+                          f"cloud={np.mean(nds):.0f}", flush=True)
+    fcsv.close()
+    print(f"\n[*] wrote {len(rows)} rows -> {args.out}", flush=True)
     # best config per overlap
     for ov in args.overlaps:
         sub = [r for r in rows if r["overlap"] == ov]
