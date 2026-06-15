@@ -91,6 +91,8 @@ def main():
     ap.add_argument("--D", type=int, default=5)
     ap.add_argument("--K", type=int, default=6)
     ap.add_argument("--wmin", type=float, default=0.2)
+    ap.add_argument("--noise", type=float, default=0.05)
+    ap.add_argument("--nan", type=float, default=0.0)
     ap.add_argument("--out", type=str, default="results/ensemble_parity.csv")
     args = ap.parse_args()
 
@@ -105,8 +107,8 @@ def main():
             for sd in args.seeds:
                 X, y, truth, planted = generate_overlapping_dataset(
                     n_samples=args.n, n_features=args.p, n_solutions=3,
-                    sparsity=args.D, latent_rank=2, overlap=ov, noise_std=0.05,
-                    binarize=False, seed=sd)
+                    sparsity=args.D, latent_rank=2, overlap=ov, noise_std=args.noise,
+                    nan_ratio=args.nan, binarize=False, seed=sd)
                 sups, p = collect_supports(X, y, alpha, args.wmin, Rmax, sd, args.D)
                 for R in args.restarts:
                     sols = cluster_supports(sups[:R], p, args.K, args.D)

@@ -91,6 +91,8 @@ def main():
     ap.add_argument("--lambda0", type=float, default=50.0)
     ap.add_argument("--lambda1", type=float, default=0.5)
     ap.add_argument("--nsample", type=int, default=200)
+    ap.add_argument("--noise", type=float, default=0.05)
+    ap.add_argument("--nan", type=float, default=0.0)
     ap.add_argument("--methods", nargs="+",
                     default=["A_GEMSS", "B_BBSSL", "C_RandLasso", "EnumLasso", "StabilitySel"],
                     help="subset of methods to run")
@@ -106,7 +108,8 @@ def main():
         for sd in args.seeds:
             X, y, truth, planted = generate_overlapping_dataset(
                 n_samples=args.n, n_features=args.p, n_solutions=3, sparsity=args.D,
-                latent_rank=2, overlap=ov, noise_std=0.05, binarize=False, seed=sd)
+                latent_rank=2, overlap=ov, noise_std=args.noise, nan_ratio=args.nan,
+                binarize=False, seed=sd)
             res = run_methods(X, y, planted, args.K, args.D, sd,
                               args.lambda0, args.lambda1, args.nsample, methods)
             for method, (f1, err, nd, prec, rec) in res.items():
