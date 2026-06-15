@@ -31,10 +31,16 @@ from src.wrappers.sklearn_wrappers import _prepare, _make_estimator, _coef_magni
 from src.evaluation import calculate_structural_metrics
 
 
-def cluster_supports(supports, p, m, D):
-    uniq = list({s for s in supports if s})
-    if not uniq:
+def cluster_supports(supports, p, m, D, max_cluster=4000):
+    # Keep the most FREQUENT distinct supports (the consensus region) and cap the
+    # count so agglomerative clustering stays O(max_cluster^2) at huge restart
+    # budgets. The dropped supports are rare singletons that would not seed a
+    # cluster anyway; we log nothing here but the cap is documented in the paper.
+    nonempty = [s for s in supports if s]
+    if not nonempty:
         return {}
+    freq = Counter(nonempty)
+    uniq = [s for s, _ in freq.most_common(max_cluster)]
     if len(uniq) <= m:
         return {f"s{i}": {"support": list(s)} for i, s in enumerate(uniq)}
     M = np.zeros((len(uniq), p))
@@ -54,7 +60,7 @@ def cluster_supports(supports, p, m, D):
     return out
 
 
-def collect_supports(X, y, alpha, wmin, R_max, seed):
+def collect_supports(X, y, alpha, wmin, R_max, seed, D):
     Xs = _prepare(X)
     y = np.asarray(y).ravel().astype(float)
     rng = np.random.default_rng(seed)
@@ -70,7 +76,7 @@ def collect_supports(X, y, alpha, wmin, R_max, seed):
             sups.append(())
             continue
         mag = _coef_magnitudes(model, p)
-        sups.append(tuple(sorted(int(i) for i in np.argsort(mag)[::-1][:5])))
+        sups.append(tuple(sorted(int(i) for i in np.argsort(mag)[::-1][:D])))
     return sups, p
 
 
@@ -101,7 +107,7 @@ def main():
                     n_samples=args.n, n_features=args.p, n_solutions=3,
                     sparsity=args.D, latent_rank=2, overlap=ov, noise_std=0.05,
                     binarize=False, seed=sd)
-                sups, p = collect_supports(X, y, alpha, args.wmin, Rmax, sd)
+                sups, p = collect_supports(X, y, alpha, args.wmin, Rmax, sd, args.D)
                 for R in args.restarts:
                     sols = cluster_supports(sups[:R], p, args.K, args.D)
                     m = calculate_structural_metrics(sols, planted) if sols else None

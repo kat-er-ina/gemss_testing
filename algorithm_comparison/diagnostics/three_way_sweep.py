@@ -42,8 +42,9 @@ def n_distinct(sols):
     return len({frozenset(s["support"]) for s in sols.values() if s.get("support")})
 
 
-def run_methods(X, y, planted, K, D, seed, lambda0, lambda1, nsample):
-    """Return {method: (sol_f1, overlap_struct_err, n_distinct, prec, rec)}."""
+def run_methods(X, y, planted, K, D, seed, lambda0, lambda1, nsample, methods):
+    """Return {method: (sol_f1, overlap_struct_err, n_distinct, prec, rec)} for the
+    selected `methods` subset."""
     out = {}
 
     def score(sols):
@@ -51,30 +52,31 @@ def run_methods(X, y, planted, K, D, seed, lambda0, lambda1, nsample):
         return (m["sol_f1"], m["overlap_struct_err"], n_distinct(sols),
                 m["sol_precision"], m["sol_recall"])
 
-    # A: GEMSS (variational)
-    out["A_GEMSS"] = score(
-        MechanismGEMSSWrapper("regression", "scalefixed", K, D, **GEMSS_HP).fit(X, y))
+    if "A_GEMSS" in methods:
+        out["A_GEMSS"] = score(
+            MechanismGEMSSWrapper("regression", "scalefixed", K, D, **GEMSS_HP).fit(X, y))
 
-    # B: BB-SSL (posterior bootstrap) -- may raise if R/BBSSL unavailable
-    try:
-        sols, ndist = run_bbssl(X, y, D, K, lambda0, lambda1, nsample)
-        f1, err, _, p, r = score(sols)
-        out["B_BBSSL"] = (f1, err, ndist, p, r)
-    except Exception as e:
-        print(f"    [B_BBSSL ERR seed={seed}] {str(e)[:160]}")
-        out["B_BBSSL"] = (np.nan, np.nan, np.nan, np.nan, np.nan)
+    if "B_BBSSL" in methods:
+        try:
+            sols, ndist = run_bbssl(X, y, D, K, lambda0, lambda1, nsample)
+            f1, err, _, p, r = score(sols)
+            out["B_BBSSL"] = (f1, err, ndist, p, r)
+        except Exception as e:
+            print(f"    [B_BBSSL ERR seed={seed}] {str(e)[:160]}")
+            out["B_BBSSL"] = (np.nan, np.nan, np.nan, np.nan, np.nan)
 
-    # C: randomised-Lasso ensemble (heuristic)
-    out["C_RandLasso"] = score(
-        RandomizedLassoEnsembleWrapper(n_solutions=K, sparsity=D, task="regression",
-                                       n_restarts=300, seed=seed).fit(X, y))
+    if "C_RandLasso" in methods:
+        out["C_RandLasso"] = score(
+            RandomizedLassoEnsembleWrapper(n_solutions=K, sparsity=D, task="regression",
+                                           n_restarts=300, seed=seed).fit(X, y))
 
-    # Foils
-    out["EnumLasso"] = score(
-        EnumLassoWrapper(n_solutions=K, sparsity=D, task="regression", seed=seed).fit(X, y))
-    out["StabilitySel"] = score(
-        StabilitySelectionWrapper(n_solutions=K, sparsity=D, task="regression",
-                                  seed=seed).fit(X, y))
+    if "EnumLasso" in methods:
+        out["EnumLasso"] = score(
+            EnumLassoWrapper(n_solutions=K, sparsity=D, task="regression", seed=seed).fit(X, y))
+    if "StabilitySel" in methods:
+        out["StabilitySel"] = score(
+            StabilitySelectionWrapper(n_solutions=K, sparsity=D, task="regression",
+                                      seed=seed).fit(X, y))
     return out
 
 
@@ -89,20 +91,24 @@ def main():
     ap.add_argument("--lambda0", type=float, default=50.0)
     ap.add_argument("--lambda1", type=float, default=0.5)
     ap.add_argument("--nsample", type=int, default=200)
+    ap.add_argument("--methods", nargs="+",
+                    default=["A_GEMSS", "B_BBSSL", "C_RandLasso", "EnumLasso", "StabilitySel"],
+                    help="subset of methods to run")
     ap.add_argument("--out", type=str, default="results/three_way_sweep.csv")
     args = ap.parse_args()
 
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     rows = []
+    methods = set(args.methods)
     print(f"Three-way regression overlap sweep: n={args.n} p={args.p} D={args.D} "
-          f"K={args.K} seeds={args.seeds} overlaps={args.overlaps}")
+          f"K={args.K} seeds={args.seeds} overlaps={args.overlaps} methods={sorted(methods)}")
     for ov in args.overlaps:
         for sd in args.seeds:
             X, y, truth, planted = generate_overlapping_dataset(
                 n_samples=args.n, n_features=args.p, n_solutions=3, sparsity=args.D,
                 latent_rank=2, overlap=ov, noise_std=0.05, binarize=False, seed=sd)
             res = run_methods(X, y, planted, args.K, args.D, sd,
-                              args.lambda0, args.lambda1, args.nsample)
+                              args.lambda0, args.lambda1, args.nsample, methods)
             for method, (f1, err, nd, prec, rec) in res.items():
                 rows.append(dict(method=method, overlap=ov, seed=sd, sol_f1=f1,
                                  overlap_struct_err=err, n_distinct=nd,
@@ -116,8 +122,10 @@ def main():
         w.writerows(rows)
     print(f"\n[*] wrote {len(rows)} rows -> {args.out}")
 
-    # aggregated table (mean over seeds)
-    methods = ["A_GEMSS", "B_BBSSL", "C_RandLasso", "EnumLasso", "StabilitySel"]
+    # aggregated table (mean over seeds), only methods actually present
+    present = [m for m in ["A_GEMSS", "B_BBSSL", "C_RandLasso", "EnumLasso", "StabilitySel"]
+               if any(r["method"] == m for r in rows)]
+    methods = present
     print(f"\n{'method':14s} | " + " | ".join(f"ov={ov} f1/err".rjust(13)
                                               for ov in args.overlaps))
     for m in methods:
