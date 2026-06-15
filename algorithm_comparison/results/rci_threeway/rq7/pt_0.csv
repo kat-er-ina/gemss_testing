@@ -1,0 +1,3 @@
+method,overlap,seed,sol_f1,overlap_struct_err,n_distinct,sol_precision,sol_recall
+A_GEMSS,4,42,0.6,0.37393162393162394,6,0.6,0.6
+C_RandLasso,4,42,0.3666666666666667,0.13659557390207547,6,0.3666666666666667,0.3666666666666667
