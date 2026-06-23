@@ -48,7 +48,16 @@ class GEMSSWrapper(ModelWrapper):
         Whether diversity regularization is enabled.
     params : dict
         Additional parameters for the GEMSS selector.
+
+    Class Attributes
+    ----------------
+    SELECTOR_CLS : type
+        The selector class instantiated in :meth:`fit`. Subclasses override this
+        to swap the likelihood (e.g. the logistic variant) without duplicating
+        the fitting/solution-recovery logic.
     """
+
+    SELECTOR_CLS = BayesianFeatureSelector
 
     def __init__(
         self,
@@ -94,7 +103,7 @@ class GEMSSWrapper(ModelWrapper):
         # 1. Initialize
         # Note: We filter kwargs to avoid passing parameters GEMSS doesn't recognize
         # if necessary, but typically GEMSS ignores unknown kwargs or we clean them.
-        selector = BayesianFeatureSelector(
+        selector = self.SELECTOR_CLS(
             n_features=X.shape[1],
             n_components=self.n_components,
             X=X,
