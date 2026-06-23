@@ -45,3 +45,7 @@ Thumbs.db
 .coverage
 htmlcov/
 *.log
+
+# experiment results: keep only the curated paper-reproduction subset
+/algorithm_comparison/results/*
+!/algorithm_comparison/results/paper/
