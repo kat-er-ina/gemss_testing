@@ -27,7 +27,10 @@ GEMSS_HP = dict(prior="sss", var_spike=0.1, lr=0.01, n_iter=6000, batch_size=16,
 
 def grid(method):
     if method == "GEMSS":  return [{"K": k} for k in (3, 6, 12, 18, 24)]
+    if method == "GEMSSjoint":  return [{"K": k} for k in (3, 6, 12, 18, 24)]  # learned variances (KH's default)
     if method == "GEMSSJ": return [{"K": 6, "lj": lj} for lj in (0, 0.3, 1, 3, 10, 100, 1000)]
+    if method == "GEMSSJHI": return [{"K": 6, "lj": lj} for lj in (1000, 3000, 10000, 30000, 100000, 1000000)]
+    if method == "GEMSSJjoint": return [{"K": 6, "lj": lj} for lj in (0, 0.3, 1, 3, 10, 100, 1000, 3000, 10000, 30000, 100000, 1000000)]  # joint + jaccard, full bracket
     if method == "ENS":    return [{"alpha": a} for a in (0.005, 0.01, 0.02, 0.05)]
     if method == "BBSSL":  return [{"l0": l0, "l1": l1} for l0 in (5, 10, 30) for l1 in (0.1, 0.5)]
     if method == "ENUM":   return [{"rho": r} for r in (0.01, 0.02, 0.05, 0.1)]
@@ -48,9 +51,14 @@ def fit_sols(method, hp, X, y, D, m, nrestarts):
     if method == "GEMSS":
         sols = MechanismGEMSSWrapper("regression", "scalefixed", hp["K"], D, **GEMSS_HP).fit(X, y)
         supp = [tuple(sorted(s["support"])) for s in sols.values() if s.get("support")]
+        return cluster_supports(supp, p, m, D)
+    if method == "GEMSSjoint":                           # KH's default: LEARNED variances
+        sols = MechanismGEMSSWrapper("regression", "joint", hp["K"], D, **GEMSS_HP).fit(X, y)
+        supp = [tuple(sorted(s["support"])) for s in sols.values() if s.get("support")]
         return cluster_supports(supp, p, m, D)          # K components -> m consensus
-    if method == "GEMSSJ":                               # GEMSS + Jaccard diversity penalty
-        sols = MechanismGEMSSWrapper("regression", "scalefixed", hp["K"], D,
+    if method in ("GEMSSJ", "GEMSSJHI", "GEMSSJjoint"):  # GEMSS + Jaccard diversity penalty
+        mech = "joint" if method == "GEMSSJjoint" else "scalefixed"
+        sols = MechanismGEMSSWrapper("regression", mech, hp["K"], D,
                                      lambda_jaccard=hp["lj"], **GEMSS_HP).fit(X, y)
         supp = [tuple(sorted(s["support"])) for s in sols.values() if s.get("support")]
         return cluster_supports(supp, p, m, D)
@@ -80,6 +88,8 @@ def main():
     ap.add_argument("--D", type=int, default=10)
     ap.add_argument("--m", type=int, default=3, help="# final solutions every method returns")
     ap.add_argument("--nrestarts", type=int, default=3000)
+    ap.add_argument("--noise", type=float, default=0.05, help="generator noise_std (RQ7 noise sweep)")
+    ap.add_argument("--nan", type=float, default=0.0, help="generator nan_ratio / missing fraction (RQ7)")
     ap.add_argument("--seeds", type=int, nargs="+", default=[42],
                     help="run all these seeds (paired across methods); one row per seed/hp")
     ap.add_argument("--torchseed", action="store_true",
@@ -97,13 +107,14 @@ def main():
         return float(np.mean(ds))
 
     f = open(args.out, "w", newline="")
-    w = csv.DictWriter(f, fieldnames=["method", "n", "p", "overlap", "seed", "hp",
+    w = csv.DictWriter(f, fieldnames=["method", "n", "p", "overlap", "noise", "nan", "seed", "hp",
                                       "sol_f1", "union_f1", "dissim", "overlap_struct_err"])
     w.writeheader(); f.flush()
     for seed in args.seeds:
         X, y, truth, planted = generate_overlapping_dataset(
             n_samples=args.n, n_features=args.p, n_solutions=3, sparsity=args.D,
-            latent_rank=2, overlap=args.overlap, noise_std=0.05, binarize=False, seed=seed)
+            latent_rank=2, overlap=args.overlap, noise_std=args.noise, nan_ratio=args.nan,
+            binarize=False, seed=seed)
         for hp in grid(args.method):
             if args.torchseed:
                 import torch; torch.manual_seed(seed)
@@ -116,6 +127,7 @@ def main():
                 print(f"  {args.method} sd={seed} hp={hp} ERR {str(e)[:120]}", flush=True)
                 f1, err, uf, dis = float("nan"), float("nan"), float("nan"), float("nan")
             w.writerow({"method": args.method, "n": args.n, "p": args.p, "overlap": args.overlap,
+                        "noise": args.noise, "nan": args.nan,
                         "seed": seed, "hp": str(hp), "sol_f1": f1, "union_f1": uf,
                         "dissim": dis, "overlap_struct_err": err})
             f.flush()
