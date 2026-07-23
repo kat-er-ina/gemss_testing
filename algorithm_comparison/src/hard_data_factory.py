@@ -155,6 +155,99 @@ def generate_overlapping_dataset(
     return X, y, true_support, supports
 
 
+def generate_distinct_solutions(
+    n_samples: int = 100,
+    n_features: int = 200,
+    n_solutions: int = 3,
+    sparsity: int = 10,
+    noise_std: float = 0.05,
+    binarize: bool = False,
+    binary_response_ratio: float = 0.5,
+    standardize: bool = True,
+    seed: int = 42,
+) -> Tuple[np.ndarray, np.ndarray, Set[int], Dict[str, List[int]]]:
+    """NON-exchangeable distinct solutions -- the fair benchmark for the count test.
+
+    ``generate_overlapping_dataset`` shares ONE latent factor matrix ``Z`` across
+    every signal feature, so the whole signal lives in a single ``latent_rank``-
+    dimensional subspace and *any* full-rank subset of the union is also a valid
+    solution (a combinatorial Rashomon set). That makes "do the mixture weights
+    reveal the *number* of solutions?" ill-posed: the true count is not
+    ``n_solutions`` but a huge combinatorial number, so near-uniform weights are
+    correct, not a failure (KH's RQ5 objection).
+
+    This generator removes the exchangeability. Each planted solution is a
+    DISJOINT block of ``sparsity`` features built as a full-rank linear mixing of
+      * a single shared response signal ``s`` (the only thing that drives ``y``), and
+      * ``sparsity - 1`` PRIVATE nuisance factors, independent across blocks:
+
+        ``X[:, block_k] = [s | U_k] @ M_k``,   ``M_k`` full-rank (sparsity x sparsity).
+
+    Consequences:
+      * ``s`` lies in the span of every block -> every block is an exact valid
+        solution (R^2 ~ 1 reconstructing ``y``).
+      * isolating ``s`` requires inverting the full ``M_k`` -> *every* feature in a
+        block is necessary; no within-block feature is substitutable.
+      * nuisances are independent across blocks -> a partial or cross-block subset
+        cannot isolate ``s``; block j cannot substitute for block k.
+
+    Therefore the number of valid size-``sparsity`` supports is EXACTLY
+    ``n_solutions``. If GEMSS's weight perplexity / distinct-support count tracks
+    ``n_solutions`` here, the weights *do* reveal the count; if it stays flat, the
+    honest-negative survives on a benchmark where the count is well-defined.
+
+    Returns the same ``(X, y, true_support, supports)`` tuple as
+    ``generate_overlapping_dataset`` (solutions are disjoint, so ``true_support``
+    is their disjoint union).
+    """
+    rng = np.random.default_rng(seed)
+    union_size = n_solutions * sparsity
+    if union_size > n_features:
+        raise ValueError(
+            f"union of disjoint supports ({union_size}) exceeds n_features "
+            f"({n_features}); reduce n_solutions/sparsity or increase n_features."
+        )
+
+    # --- shared response signal: the ONLY driver of y ------------------------
+    s = rng.standard_normal(n_samples)
+
+    # --- lay out disjoint blocks ---------------------------------------------
+    all_signal = rng.choice(n_features, size=union_size, replace=False)
+    supports: Dict[str, List[int]] = {}
+
+    X = rng.standard_normal((n_samples, n_features))  # default: pure noise cols
+    for k in range(n_solutions):
+        block = all_signal[k * sparsity : (k + 1) * sparsity].astype(int)
+        supports[f"solution_{k}"] = sorted(int(i) for i in block)
+        # private nuisances, independent across blocks
+        U_k = rng.standard_normal((n_samples, sparsity - 1))
+        latent_k = np.column_stack([s, U_k])              # (n, sparsity)
+        # full-rank mixing: redraw until well-conditioned (almost always first try)
+        while True:
+            M_k = rng.standard_normal((sparsity, sparsity))
+            if np.linalg.cond(M_k) < 1e3:
+                break
+        X[:, block] = latent_k @ M_k
+
+    true_support: Set[int] = {int(i) for i in all_signal}
+
+    # white noise on the same (unit) scale, then optional standardization
+    X = X + rng.normal(0.0, noise_std, size=X.shape)
+    if standardize:
+        X = StandardScaler().fit_transform(X)
+        X = np.nan_to_num(X, nan=0.0)
+
+    # --- response: driven solely by s ----------------------------------------
+    if binarize:
+        y_prob = 1.0 / (1.0 + np.exp(-s))
+        thr = np.quantile(y_prob, 1.0 - binary_response_ratio)
+        y = (y_prob > thr).astype(float)
+    else:
+        y = s.astype(float)
+
+    return X, y, true_support, supports
+
+
 def support_recovery_check(
     X: np.ndarray, y_latent: np.ndarray, supports: Dict[str, List[int]]
 ) -> Dict[str, float]:

@@ -94,6 +94,12 @@ class MechanismGEMSSWrapper(ModelWrapper):
             raise ValueError(f"unknown mechanism {self.mechanism}")
 
         mu = sel.mixture.mu.detach().cpu().numpy()
+        # Expose fitted mixing weights (for RQ5: does weight perplexity reveal the
+        # number of solutions?). alpha_ sums to 1; perplexity = exp(entropy(alpha_)).
+        try:
+            self.alpha_ = sel.mixture.get_alpha().detach().cpu().numpy()
+        except Exception:
+            self.alpha_ = None
         D = self.sparsity
         results = {f"component_{k}": {"support": np.argsort(np.abs(mu[k]))[::-1][:D].tolist()}
                    for k in range(self.n_components)}
