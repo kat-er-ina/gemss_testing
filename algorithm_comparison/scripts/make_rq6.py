@@ -1,4 +1,8 @@
-"""RQ6 robustness under label noise and missingness (tab:RQ6).
+"""RQ6 robustness under feature noise and missingness (tab:RQ6).
+
+Note: the "noise" sweep is Gaussian noise added to the design matrix X (features),
+not to the labels y -- see src/hard_data_factory.py (X += noise). It is feature /
+input noise, not label noise.
 
 union-F1 (best hp) and recovered dissimilarity for GEMSS(joint) / ensemble / ALFESE,
 across a noise sweep (nan=0, noise in {0.05,0.2,0.5,1.0} = clean/x4/x10/x20) and a

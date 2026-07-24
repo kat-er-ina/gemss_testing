@@ -15,6 +15,7 @@ Likelihood tempering is deliberately NOT offered here: it is unvalidated
 (validate_daem.py) and stays out of the trusted comparison.
 """
 
+import time
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -23,6 +24,28 @@ import torch
 from gemss.feature_selection.inference import BayesianFeatureSelector
 from .base import ModelWrapper
 from .logistic_gemss import LogisticBayesianFeatureSelector
+
+
+def _elbo_plateau_iter(elbo_hist: List[float], frac: float = 0.99) -> int:
+    """Iteration (1-based) at which the ELBO trace reaches ``frac`` of its total
+    lo->hi gain, i.e. an empirical convergence point for the fixed-length loop.
+
+    The raw per-iteration ELBO is a noisy single-batch estimate, so the trace is
+    first smoothed with a moving average (window ~ n/100) before the crossing is
+    located; the returned index is corrected back to the un-smoothed timeline.
+    """
+    e = np.asarray(elbo_hist, dtype=float)
+    n = int(e.size)
+    if n < 2:
+        return n
+    w = max(1, n // 100)
+    s = np.convolve(e, np.ones(w) / w, mode="valid") if w > 1 else e
+    lo, hi = float(np.min(s)), float(np.max(s))
+    if hi - lo < 1e-9:
+        return n
+    target = lo + frac * (hi - lo)
+    idx = int(np.argmax(s >= target))
+    return min(n, idx + (w - 1) // 2 + 1)
 
 
 def _kernel_repulsion(mu: torch.Tensor, bandwidth: Optional[float] = None) -> torch.Tensor:
@@ -80,20 +103,46 @@ class MechanismGEMSSWrapper(ModelWrapper):
                     sel.mixture._log_var[k].fill_(float(np.log(np.expm1(scales[k]))))
                 sel.mixture._log_var.requires_grad_(False)
 
+        # --- optimize, capturing the ELBO trace + wall-clock for T1/T6 logging ---
+        elbo_hist: List[float] = []
+        t0 = time.perf_counter()
         if self.mechanism in ("joint", "scalefixed"):
-            sel.optimize(regularize=(self.lambda_jaccard > 0),
-                         lambda_jaccard=self.lambda_jaccard, verbose=False)
+            history = sel.optimize(regularize=(self.lambda_jaccard > 0),
+                                   lambda_jaccard=self.lambda_jaccard, verbose=False)
+            elbo_hist = list(history.get("elbo", []))
         elif self.mechanism == "kernel":
             opt = sel.opt
             for _ in range(sel.n_iter):
                 z, _c = sel.mixture.sample(sel.batch_size)
-                obj = (sel.prior.log_prob(z) + sel.log_likelihood(z) - sel.mixture.log_prob(z)).mean()
-                obj = obj - self.kernel_gamma * _kernel_repulsion(sel.mixture.mu)
+                base = (sel.prior.log_prob(z) + sel.log_likelihood(z) - sel.mixture.log_prob(z)).mean()
+                obj = base - self.kernel_gamma * _kernel_repulsion(sel.mixture.mu)
                 opt.zero_grad(); (-obj).backward(); opt.step()
+                elbo_hist.append(float(base.item()))  # record the plain ELBO (no repulsion term)
         else:
             raise ValueError(f"unknown mechanism {self.mechanism}")
+        self.fit_seconds_ = time.perf_counter() - t0
+
+        # iterations actually run, and an empirical ELBO-plateau convergence point
+        # (the loop is fixed-length at n_iter, so these coincide unless it plateaus early)
+        self.n_iter_ = len(elbo_hist)
+        self.n_iter_converged_ = _elbo_plateau_iter(elbo_hist) if elbo_hist else self.n_iter_
+        # Final ELBO (= negative free energy; higher is better). Re-estimated from a
+        # fresh large batch so it is a low-variance value for model selection (T1),
+        # rather than the last noisy single-batch training estimate.
+        try:
+            with torch.no_grad():
+                z_eval, _ = sel.mixture.sample(max(256, sel.batch_size))
+                self.elbo_ = float(sel.elbo(z_eval).item())
+        except Exception:
+            self.elbo_ = float(elbo_hist[-1]) if elbo_hist else float("nan")
 
         mu = sel.mixture.mu.detach().cpu().numpy()
+        # Expose fitted mixing weights (for RQ5: does weight perplexity reveal the
+        # number of solutions?). alpha_ sums to 1; perplexity = exp(entropy(alpha_)).
+        try:
+            self.alpha_ = sel.mixture.get_alpha().detach().cpu().numpy()
+        except Exception:
+            self.alpha_ = None
         D = self.sparsity
         results = {f"component_{k}": {"support": np.argsort(np.abs(mu[k]))[::-1][:D].tolist()}
                    for k in range(self.n_components)}
