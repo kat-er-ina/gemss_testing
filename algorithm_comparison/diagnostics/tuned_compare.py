@@ -88,8 +88,8 @@ def main():
     ap.add_argument("--D", type=int, default=10)
     ap.add_argument("--m", type=int, default=3, help="# final solutions every method returns")
     ap.add_argument("--nrestarts", type=int, default=3000)
-    ap.add_argument("--noise", type=float, default=0.05, help="generator noise_std (RQ7 noise sweep)")
-    ap.add_argument("--nan", type=float, default=0.0, help="generator nan_ratio / missing fraction (RQ7)")
+    ap.add_argument("--noise", type=float, default=0.05, help="generator noise_std (RQ6 noise sweep)")
+    ap.add_argument("--nan", type=float, default=0.0, help="generator nan_ratio / missing fraction (RQ6)")
     ap.add_argument("--seeds", type=int, nargs="+", default=[42],
                     help="run all these seeds (paired across methods); one row per seed/hp")
     ap.add_argument("--torchseed", action="store_true",
