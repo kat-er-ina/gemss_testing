@@ -202,6 +202,10 @@ def generate_distinct_solutions(
     """
     rng = np.random.default_rng(seed)
     union_size = n_solutions * sparsity
+    if n_samples <= sparsity:
+        raise ValueError(
+            f"n_samples ({n_samples}) must exceed sparsity ({sparsity}) so arbitrary supports cannot span the response."
+        )
     if union_size > n_features:
         raise ValueError(
             f"union of disjoint supports ({union_size}) exceeds n_features "
