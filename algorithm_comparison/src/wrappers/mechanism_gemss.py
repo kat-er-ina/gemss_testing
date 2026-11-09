@@ -137,6 +137,9 @@ class MechanismGEMSSWrapper(ModelWrapper):
             self.elbo_ = float(elbo_hist[-1]) if elbo_hist else float("nan")
 
         mu = sel.mixture.mu.detach().cpu().numpy()
+        # Fitted component means / variances, kept for post-hoc diagnostics (Round 2, R1).
+        self.mu_ = mu
+        self.var_ = sel.mixture.get_variance().detach().cpu().numpy()
         # Expose fitted mixing weights (for RQ5: does weight perplexity reveal the
         # number of solutions?). alpha_ sums to 1; perplexity = exp(entropy(alpha_)).
         try:

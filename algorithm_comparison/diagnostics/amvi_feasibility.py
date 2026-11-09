@@ -52,6 +52,12 @@ def main():
     ap.add_argument("--max-seconds", dest="max_seconds", type=float, default=120.0)
     ap.add_argument("--max-components", dest="max_components", type=int, default=10)
     ap.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3])
+    # Round 2 (plan sec. 7, R4). Defaults reproduce E1/E1b.
+    ap.add_argument("--rank", type=int, default=2, help="generator latent_rank; 2 = RQ1")
+    ap.add_argument("--sigma-mode", dest="sigma_mode", choices=["fixed", "matched", "oracle"],
+                    default="fixed",
+                    help="fixed: --sigma; matched: 1/sd(raw y) = GEMSS's implicit unit noise on "
+                         "the standardized scale; oracle: residual s.d. of OLS on one planted support")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
@@ -60,7 +66,8 @@ def main():
               "mf_seconds", "fit_seconds", "total_seconds", "components",
               "candidate_components", "status", "fallback", "returned_delta_mf",
               "union_f1_topD", "n_sols_topD", "dissim_topD", "true_dissim",
-              "union_f1_pip", "n_pip", "expected_size", "error"]
+              "union_f1_pip", "n_pip", "expected_size", "error",
+              "latent_rank", "sigma_mode"]
     with open(args.out, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fields)
         w.writeheader(); f.flush()
@@ -68,15 +75,24 @@ def main():
             for seed in args.seeds:
                 X, y, truth, planted = generate_overlapping_dataset(
                     n_samples=args.n, n_features=p, n_solutions=3, sparsity=args.D,
-                    latent_rank=2, overlap=args.overlap, noise_std=args.noise,
+                    latent_rank=args.rank, overlap=args.overlap, noise_std=args.noise,
                     nan_ratio=0.0, binarize=False, seed=seed)
                 ys = (y - y.mean()) / y.std()
                 omega = args.D / p
+                if args.sigma_mode == "matched":
+                    sigma = 1.0 / y.std()
+                elif args.sigma_mode == "oracle":
+                    A = np.c_[np.ones(len(ys)), X[:, sorted(planted["solution_0"])]]
+                    r = ys - A @ np.linalg.lstsq(A, ys, rcond=None)[0]
+                    sigma = float(np.sqrt(r @ r / (len(ys) - A.shape[1])))
+                else:
+                    sigma = args.sigma
                 row = dict(n=args.n, p=p, overlap=args.overlap, D=args.D, m=args.m, seed=seed,
-                           sigma=args.sigma, tau=args.tau, omega=omega,
-                           true_dissim=mean_dissim(planted.values()), error="")
+                           sigma=sigma, tau=args.tau, omega=omega,
+                           true_dissim=mean_dissim(planted.values()), error="",
+                           latent_rank=args.rank, sigma_mode=args.sigma_mode)
                 try:
-                    model = RegressionModel(X, ys, sigma=args.sigma, tau=args.tau, omega=omega)
+                    model = RegressionModel(X, ys, sigma=sigma, tau=args.tau, omega=omega)
                     t0 = time.perf_counter()
                     _, baseline, _ = strong_meanfield(model, seed=seed)
                     row["mf_seconds"] = time.perf_counter() - t0

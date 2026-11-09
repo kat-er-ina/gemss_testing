@@ -51,7 +51,9 @@ def cluster_to_m(supports, p, m, D):
     return out
 
 
-def run_bbssl(X, y, D, m, lambda0, lambda1, nsample=200, alpha=1.0):
+def run_bbssl(X, y, D, m, lambda0, lambda1, nsample=200, alpha=1.0, raw=None):
+    """``raw``: optional dict; if given, it receives the bootstrap ``beta`` and
+    ``gamma`` arrays (Round 2 diagnostics). The return value is unchanged."""
     with tempfile.TemporaryDirectory() as td:
         xf, yf, of = (os.path.join(td, n) for n in ("X.csv", "y.csv", "out.csv"))
         np.savetxt(xf, X, delimiter=","); np.savetxt(yf, y, delimiter=",")
@@ -61,6 +63,8 @@ def run_bbssl(X, y, D, m, lambda0, lambda1, nsample=200, alpha=1.0):
             raise RuntimeError("BB-SSL failed: " + r.stderr[-400:])
         beta = np.atleast_2d(np.loadtxt(of, delimiter=","))
         gamma = np.atleast_2d(np.loadtxt(of + ".g", delimiter=",")) if os.path.exists(of + ".g") else None
+    if raw is not None:
+        raw["beta"], raw["gamma"] = beta, gamma
     supports = []
     for i, bb in enumerate(beta):
         if gamma is not None:

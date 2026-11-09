@@ -113,6 +113,9 @@ def _record_gemss_meta(wrapper, meta):
     meta["elbo"] = getattr(wrapper, "elbo_", None)
     meta["n_iter"] = getattr(wrapper, "n_iter_", None)
     meta["n_iter_converged"] = getattr(wrapper, "n_iter_converged_", None)
+    meta["mu"] = getattr(wrapper, "mu_", None)        # Round 2 dumps (R1)
+    meta["var"] = getattr(wrapper, "var_", None)
+    meta["alpha"] = getattr(wrapper, "alpha_", None)
 
 
 def fit_sols(method, hp, X, y, D, m, nrestarts, meta=None):
@@ -157,7 +160,11 @@ def fit_sols(method, hp, X, y, D, m, nrestarts, meta=None):
         return RandomizedLassoEnsembleWrapper(n_solutions=m, sparsity=D, task="regression",
                                               alpha=hp["alpha"], n_restarts=nrestarts).fit(X, y)
     if method == "BBSSL":
-        return run_bbssl(X, y, D, m, hp["l0"], hp["l1"], 200)[0]
+        raw = {}
+        sols = run_bbssl(X, y, D, m, hp["l0"], hp["l1"], 200, raw=raw)[0]
+        if meta is not None:
+            meta["bb_beta"], meta["bb_gamma"] = raw.get("beta"), raw.get("gamma")
+        return sols
     if method == "ENUM":
         return EnumLassoWrapper(n_solutions=m, sparsity=D, task="regression", rho=hp["rho"]).fit(X, y)
     if method == "STAB":
@@ -199,8 +206,24 @@ def main():
                     help="run all these seeds (paired across methods); one row per seed/hp")
     ap.add_argument("--torchseed", action="store_true",
                     help="also seed torch per fit (reduces GEMSS run-to-run variance)")
+    # Round 2 (special-issue comparison plan, sec. 7). Defaults reproduce the old runs.
+    ap.add_argument("--rank", type=int, default=2,
+                    help="generator latent_rank (R4 identifiability sweep); 2 = RQ1")
+    ap.add_argument("--var-spike", dest="var_spike", type=float, default=None,
+                    help="override GEMSS spike s.d. (R3); default GEMSS_HP value")
+    ap.add_argument("--n-iter", dest="n_iter", type=int, default=None,
+                    help="override GEMSS optimisation steps (R2); default GEMSS_HP value")
+    ap.add_argument("--dump-dir", dest="dump_dir", default=None,
+                    help="save fitted parameters (GEMSS mu/var/alpha, BB-SSL beta/gamma) per seed/hp")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
+
+    overrides = {k: v for k, v in (("var_spike", args.var_spike), ("n_iter", args.n_iter))
+                 if v is not None}
+    GEMSS_HP.update(overrides)            # every GEMSS branch reads GEMSS_HP at call time
+    overrides_str = ";".join(f"{k}={v}" for k, v in overrides.items())
+    if args.dump_dir:
+        os.makedirs(args.dump_dir, exist_ok=True)
 
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
 
@@ -225,7 +248,8 @@ def main():
                                       "supports", "pred_mean", "pred_best",
                                       "elbo", "n_iter", "n_iter_converged",
                                       "fit_seconds", "peak_mem_mb",
-                                      "structure", "nonlinear", "noise_dist"])
+                                      "structure", "nonlinear", "noise_dist",
+                                      "latent_rank", "gemss_overrides"])
     w.writeheader(); f.flush()
     gen = (generate_overlapping_dataset_equicorr if args.structure == "equicorr"
            else generate_overlapping_dataset)
@@ -233,7 +257,7 @@ def main():
     for seed in args.seeds:
         X, y, truth, planted = gen(
             n_samples=args.n, n_features=args.p, n_solutions=3, sparsity=args.D,
-            latent_rank=2, overlap=args.overlap, noise_std=args.noise, nan_ratio=args.nan,
+            latent_rank=args.rank, overlap=args.overlap, noise_std=args.noise, nan_ratio=args.nan,
             binarize=False, nonlinear=args.nonlinear, noise_dist=args.noise_dist, seed=seed, **extra)
         for hp in grid(args.method):
             if args.torchseed:
@@ -271,8 +295,16 @@ def main():
                         "n_iter_converged": "" if n_iter_conv is None else n_iter_conv,
                         "fit_seconds": fit_seconds, "peak_mem_mb": _peak_mem_mb(),
                         "structure": args.structure, "nonlinear": int(args.nonlinear),
-                        "noise_dist": args.noise_dist})
+                        "noise_dist": args.noise_dist,
+                        "latent_rank": args.rank, "gemss_overrides": overrides_str})
             f.flush()
+            if args.dump_dir:
+                arrs = {k: meta[k] for k in ("mu", "var", "alpha", "bb_beta", "bb_gamma")
+                        if meta.get(k) is not None}
+                if arrs:
+                    slug = "_".join(f"{k}{v}" for k, v in hp.items())
+                    np.savez_compressed(os.path.join(
+                        args.dump_dir, f"{args.method}_r{args.rank}_sd{seed}_{slug}.npz"), **arrs)
             print(f"  {args.method} ov={args.overlap} sd={seed} hp={hp} -> "
                   f"u={uf:.3f} s={f1:.3f}", flush=True)
     f.close()
