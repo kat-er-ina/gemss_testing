@@ -30,7 +30,8 @@ GEMSS_HP = dict(prior="sss", var_spike=0.1, lr=0.01, n_iter=6000, batch_size=16,
                 weight_slab=0.9, weight_spike=0.1)
 
 # methods whose fit exposes an ELBO / free energy (T1); all others log blank elbo/n_iter
-GEMSS_METHODS = {"GEMSS", "GEMSSjoint", "GEMSSJ", "GEMSSJHI", "GEMSSJjoint"}
+GEMSS_METHODS = {"GEMSS", "GEMSSjoint", "GEMSSjointSS", "GEMSSjointSS90",
+                 "GEMSSJ", "GEMSSJHI", "GEMSSJjoint"}
 
 
 def _peak_mem_mb():
@@ -91,6 +92,7 @@ def serialize_supports(sols):
 def grid(method):
     if method == "GEMSS":  return [{"K": k} for k in (3, 6, 12, 18, 24)]
     if method == "GEMSSjoint":  return [{"K": k} for k in (3, 6, 12, 18, 24)]  # learned variances (KH's default)
+    if method in ("GEMSSjointSS", "GEMSSjointSS90"): return [{"K": k} for k in (3, 6, 12, 18, 24)]  # E1c: unstructured prior
     if method == "GEMSSJ": return [{"K": 6, "lj": lj} for lj in (0, 0.3, 1, 3, 10, 100, 1000)]
     if method == "GEMSSJHI": return [{"K": 6, "lj": lj} for lj in (1000, 3000, 10000, 30000, 100000, 1000000)]
     if method == "GEMSSJjoint": return [{"K": 6, "lj": lj} for lj in (0, 0.3, 1, 3, 10, 100, 1000, 3000, 10000, 30000, 100000, 1000000)]  # joint + jaccard, full bracket
@@ -135,6 +137,15 @@ def fit_sols(method, hp, X, y, D, m, nrestarts, meta=None):
         sols = w.fit(X, y); _record_gemss_meta(w, meta)
         supp = [tuple(sorted(s["support"])) for s in sols.values() if s.get("support")]
         return cluster_supports(supp, p, m, D)          # K components -> m consensus
+    if method in ("GEMSSjointSS", "GEMSSjointSS90"):     # E1c: GEMSSjoint with the UNSTRUCTURED prior
+        # SS: slab weight D/p = same prior expected support size D as the structured prior;
+        # SS90: the weights already in GEMSS_HP (0.9 slab), which the structured prior ignores
+        ws = D / p if method == "GEMSSjointSS" else GEMSS_HP["weight_slab"]
+        w = MechanismGEMSSWrapper("regression", "joint", hp["K"], D,
+                                  **dict(GEMSS_HP, prior="ss", weight_slab=ws, weight_spike=1 - ws))
+        sols = w.fit(X, y); _record_gemss_meta(w, meta)
+        supp = [tuple(sorted(s["support"])) for s in sols.values() if s.get("support")]
+        return cluster_supports(supp, p, m, D)
     if method in ("GEMSSJ", "GEMSSJHI", "GEMSSJjoint"):  # GEMSS + Jaccard diversity penalty
         mech = "joint" if method == "GEMSSJjoint" else "scalefixed"
         w = MechanismGEMSSWrapper("regression", mech, hp["K"], D,
