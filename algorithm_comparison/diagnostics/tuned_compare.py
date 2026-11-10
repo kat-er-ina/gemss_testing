@@ -98,6 +98,7 @@ def grid(method):
     if method == "GEMSSJjoint": return [{"K": 6, "lj": lj} for lj in (0, 0.3, 1, 3, 10, 100, 1000, 3000, 10000, 30000, 100000, 1000000)]  # joint + jaccard, full bracket
     if method == "ENS":    return [{"alpha": a} for a in (0.005, 0.01, 0.02, 0.05)]
     if method == "BBSSL":  return [{"l0": l0, "l1": l1} for l0 in (5, 10, 30) for l1 in (0.1, 0.5)]
+    if method == "BBSSLlow": return [{"l0": l0, "l1": l1} for l0 in (1, 2) for l1 in (0.1, 0.5)]  # R7: weaker spike
     if method == "ENUM":   return [{"rho": r} for r in (0.01, 0.02, 0.05, 0.1)]
     if method == "STAB":   return [{"alpha": a} for a in (0.01, 0.05, 0.1)]
     if method == "ALFESE": return [{"sel": "mi", "tau": t}
@@ -159,7 +160,7 @@ def fit_sols(method, hp, X, y, D, m, nrestarts, meta=None):
     if method == "ENS":
         return RandomizedLassoEnsembleWrapper(n_solutions=m, sparsity=D, task="regression",
                                               alpha=hp["alpha"], n_restarts=nrestarts).fit(X, y)
-    if method == "BBSSL":
+    if method in ("BBSSL", "BBSSLlow"):
         raw = {}
         sols = run_bbssl(X, y, D, m, hp["l0"], hp["l1"], 200, raw=raw)[0]
         if meta is not None:
