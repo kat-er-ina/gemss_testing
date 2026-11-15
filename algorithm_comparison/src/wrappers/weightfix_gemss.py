@@ -54,7 +54,9 @@ from gemss.feature_selection.models import SpikeAndSlabPrior, StructuredSpikeAnd
 
 from .mechanism_gemss import MechanismGEMSSWrapper, _elbo_plateau_iter
 
-ESTIMATORS = ("current", "frozen", "strat", "score", "ngvi", "ngvi_mix", "fixedpoint")
+ESTIMATORS = ("current", "frozen", "strat", "score", "ngvi", "ngvi_mix", "fixedpoint", "ngvi_frozen")
+# ngvi_frozen (plan sec. 16): the ngvi updates for means and precisions with the weight step set to 0,
+# i.e. weights stay at their uniform start; separates "NGD components" from "learned weights".
 LOG2PI = math.log(2 * math.pi)
 
 
@@ -188,6 +190,8 @@ class WeightFixRunner:
         self.B, self.K, self.p = batch_size, mix.mu.shape[0], mix.mu.shape[1]
         self.strat_n = strat_draws or max(1, math.ceil(batch_size / self.K))
         self.beta, self.beta_w = ngvi_beta, (ngvi_beta if ngvi_beta_w is None else ngvi_beta_w)
+        if estimator == "ngvi_frozen":
+            self.beta_w = 0.0
         self.fp_every, self.fp_draws, self.fp_eta, self.clip = fp_every, fp_draws, fp_eta, logit_clip
         self.t = 0
         if estimator not in ("current", "frozen"):
@@ -197,7 +201,7 @@ class WeightFixRunner:
         if estimator in ("current", "frozen", "strat", "score", "fixedpoint"):
             self.opt = sel.opt if sel is not None else torch.optim.Adam(
                 [q for q in mix.parameters()], lr=lr)
-        if estimator in ("ngvi", "ngvi_mix"):
+        if estimator in ("ngvi", "ngvi_mix", "ngvi_frozen"):
             with torch.no_grad():
                 self.mu = mix.mu.detach().clone()
                 self.prec = 1.0 / mix.get_variance().detach().clone()
@@ -216,7 +220,7 @@ class WeightFixRunner:
 
     def sync(self):
         """Write ngvi state back into the mixture (readouts use the mixture)."""
-        if self.est not in ("ngvi", "ngvi_mix"):
+        if self.est not in ("ngvi", "ngvi_mix", "ngvi_frozen"):
             return
         with torch.no_grad():
             self.mix.mu.copy_(self.mu)
@@ -317,7 +321,7 @@ class WeightFixRunner:
                 hist.append(self._step_strat())
             elif self.est == "score":
                 hist.append(self._step_score())
-            elif self.est == "ngvi":
+            elif self.est in ("ngvi", "ngvi_frozen"):
                 hist.append(self._step_ngvi())
             elif self.est == "ngvi_mix":
                 hist.append(self._step_ngvi_mix())
