@@ -12,9 +12,13 @@ from src.hard_data_factory import generate_overlapping_dataset
 from src.evaluation import calculate_metrics
 
 root = sys.argv[2]
-ARMS = ["current", "frozen", "strat", "score", "ngvi", "fixedpoint"]
+ARMS = ["current", "frozen", "strat", "score", "ngvi", "fixedpoint", "ngvi_frozen"]
 NAME = dict(current="F0 current", frozen="frozen", strat="F1 strat", score="F2 score", ngvi="F3 ngvi",
-            fixedpoint="F4 fixedpoint")
+            fixedpoint="F4 fixedpoint", ngvi_frozen="F3 frozen-w")
+# 2x2 decomposition (plan sec. 16): component optimiser {Adam, NGD} x weights {uniform, learned}
+DECOMP = (("ngvi", "ngvi_frozen", "learned weights, under NGD"),
+          ("ngvi_frozen", "frozen", "NGD vs Adam components, uniform weights"),
+          ("ngvi", "current", "F3 vs F0 (both changes)"))
 pd.set_option("display.width", 220)
 
 
@@ -51,7 +55,7 @@ print("chosen K:", b.groupby("estimator").K.value_counts().unstack().reindex(ARM
 
 piv = b.pivot_table(index="id", columns="estimator", values="tv_soft")
 print("\n== E3 paired soft-TV differences (row minus column; negative = row better), 250 datasets")
-for a in ARMS[1:]:
+for a in [x for x in ARMS[1:] if x in piv]:
     print(f"  {NAME[a]:14s} - F0: {ci(piv[a] - piv['current'])}")
 fixes = ["strat", "score", "ngvi", "fixedpoint"]
 best = min(fixes, key=lambda a: piv[a].mean())
@@ -68,8 +72,15 @@ print(f"  overall: {ci(piv['ngvi'] - piv['frozen'])}")
 for (d, rho), g in b.groupby(["design", "rho"]):
     pv = g.pivot_table(index="id", columns="estimator", values="tv_soft")
     print(f"  {d} {rho}: {ci(pv['ngvi'] - pv['frozen'])}")
+if "ngvi_frozen" in piv:
+    print("\n== 2x2 decomposition, E3 soft TV (row arm minus reference; negative = row arm better)")
+    for a, r, lab in DECOMP:
+        print(f"  {NAME[a]} - {NAME[r]} ({lab}): overall {ci(piv[a] - piv[r])}")
+        for (d, rho), g in b.groupby(["design", "rho"]):
+            pv = g.pivot_table(index="id", columns="estimator", values="tv_soft")
+            print(f"      {d} {rho}: {ci(pv[a] - pv[r])}")
 print("\n== learned vs uniform weights on the same components: tv_soft - tv_soft_unif (negative = weights help)")
-for a in ARMS:
+for a in [x for x in ARMS if x in piv]:
     if a != "frozen":
         x = b[b.estimator == a]
         print(f"  {NAME[a]:14s} {ci(x.tv_soft - x.tv_soft_unif)}")
@@ -148,7 +159,15 @@ for prior in ("sss", "ss"):
         gs = g[g.step == step]
         e = gs.loc[gs.groupby(["estimator", "seed"]).elbo.idxmax()].pivot_table(index="seed", columns="estimator",
                                                                                 values="union_f1")
+        pairs = [("ngvi", "current"), ("ngvi", "frozen"), ("frozen", "current")]
+        if "ngvi_frozen" in e:
+            pairs += [(a, r) for a, r, _ in DECOMP[:2]]
         print(f"   {step} steps, K by ELBO, paired union-F1 over 25 seeds: " + "; ".join(
-            f"{NAME[a]} - {NAME[r]} {ci(e[a] - e[r])}" for a, r in (("ngvi", "current"), ("ngvi", "frozen"),
-                                                                    ("frozen", "current"))))
+            f"{NAME[a]} - {NAME[r]} {ci(e[a] - e[r])}" for a, r in pairs))
+    if "ngvi_frozen" in set(g.estimator):   # hard readout at fixed K: seed mean over K, paired over seeds
+        for step in (6000, 48000):
+            e = g[g.step == step].pivot_table(index="seed", columns="estimator", values="union_f1", aggfunc="mean")
+            print(f"   {step} steps, fixed K (mean over K per seed), paired union-F1: " + "; ".join(
+                f"{NAME[a]} - {NAME[r]} {ci(e[a] - e[r])}" for a, r in (("ngvi_frozen", "frozen"),
+                    ("ngvi_frozen", "current"), ("ngvi", "ngvi_frozen"), ("frozen", "current"))))
     print("   seconds per fit at 48k (median):", g[g.step == 48000].groupby("estimator").seconds.median().reindex(ARMS).round(0).to_dict())

@@ -20,7 +20,7 @@ for s in range(1, 26):
     sets = [set(x) for x in ss.values()]
     shared = set.intersection(*sets)
     sup[s] = [x - shared for x in sets]          # private features of each planted solution
-DIRS = {"current": "r3/dumps/R5_{p}", **{a: f"wfix/dumps/R5w_{a}_{{p}}" for a in ("frozen", "strat", "score", "ngvi", "fixedpoint")}}
+DIRS = {"current": "r3/dumps/R5_{p}", **{a: f"wfix/dumps/R5w_{a}_{{p}}" for a in ("frozen", "strat", "score", "ngvi", "fixedpoint", "ngvi_frozen")}}
 rows = []
 for arm, d in DIRS.items():
     for p in ("sss", "ss"):
@@ -45,7 +45,7 @@ for arm, d in DIRS.items():
                                      n_alt=int((w[:m] >= 1 / (2 * m)).sum()), n_found=int((w[:m] > 0).sum())))
 r = pd.DataFrame(rows)
 pd.set_option("display.width", 200)
-order = ["current", "frozen", "strat", "score", "ngvi", "fixedpoint"]
+order = ["current", "frozen", "strat", "score", "ngvi", "fixedpoint", "ngvi_frozen"]
 for p in ("sss", "ss"):
     for step in (6000, 48000):
         t = r[(r.prior == p) & (r.step == step)].groupby(["K", "arm"])[["w1", "w2", "w3", "none", "n_alt", "n_found"]].mean()
