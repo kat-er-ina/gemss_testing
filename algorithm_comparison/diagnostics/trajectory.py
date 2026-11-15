@@ -8,6 +8,11 @@ point without ground truth:
   raw_dissim  mean pairwise Jaccard distance among the K raw top-D supports
   n_distinct  number of distinct raw top-D supports
   perplexity  exp(entropy(alpha))
+Plan sec. 14 adds --estimator (src/wrappers/weightfix_gemss.py): 'current' (default)
+is GEMSS's own loop and reproduces the R5 rows bit for bit; frozen / strat / score /
+ngvi / fixedpoint replace only the optimisation loop. Extra columns: estimator,
+alpha_max, union_f1_topw (union-F1 of the m highest-weight components' top-D
+supports, no clustering), signal_share_w (alpha-weighted top-D signal share).
 The torch RNG state is saved and restored around every checkpoint evaluation,
 so the optimisation path is identical to a single uninterrupted run: the
 6000-step checkpoint reproduces tuned_compare --torchseed (R4, r = 2) and the
@@ -23,6 +28,7 @@ from src.evaluation import calculate_structural_metrics, calculate_metrics, _jac
 from gemss.feature_selection.inference import BayesianFeatureSelector
 from ensemble_parity import cluster_supports
 from tuned_compare import GEMSS_HP
+from src.wrappers.weightfix_gemss import ESTIMATORS, make_runner
 
 
 def mean_dissim(sets):
@@ -51,6 +57,13 @@ def main():
     ap.add_argument("--chunk", type=int, default=2000,
                     help="max steps per optimize() call (bounds the per-step history memory)")
     ap.add_argument("--dump-dir", dest="dump_dir", default=None)
+    ap.add_argument("--estimator", choices=ESTIMATORS, default="current")
+    ap.add_argument("--strat-draws", dest="strat_draws", type=int, default=None)
+    ap.add_argument("--ngvi-beta", dest="ngvi_beta", type=float, default=0.02)
+    ap.add_argument("--ngvi-beta-w", dest="ngvi_beta_w", type=float, default=None)
+    ap.add_argument("--fp-every", dest="fp_every", type=int, default=100)
+    ap.add_argument("--fp-draws", dest="fp_draws", type=int, default=64)
+    ap.add_argument("--fp-eta", dest="fp_eta", type=float, default=1.0)
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
@@ -66,7 +79,9 @@ def main():
 
     fields = ["prior", "rank", "seed", "K", "step", "union_f1", "sol_f1", "dissim",
               "signal_share_topD", "elbo", "raw_dissim", "n_distinct", "perplexity",
-              "seconds", "supports"]
+              "seconds", "supports", "estimator", "alpha_max", "union_f1_topw", "signal_share_w"]
+    est_opts = dict(strat_draws=args.strat_draws, ngvi_beta=args.ngvi_beta, ngvi_beta_w=args.ngvi_beta_w,
+                    fp_every=args.fp_every, fp_draws=args.fp_draws, fp_eta=args.fp_eta)
     f = open(args.out, "w", newline="")
     w = csv.DictWriter(f, fieldnames=fields); w.writeheader(); f.flush()
     cps = sorted(args.checkpoints)
@@ -80,12 +95,13 @@ def main():
             torch.manual_seed(seed)                      # = tuned_compare --torchseed
             sel = BayesianFeatureSelector(n_features=args.p, n_components=K, X=X, y=y,
                                           sss_sparsity=args.D, n_iter=args.chunk, **sel_kwargs)
+            runner = make_runner(sel, args.estimator, **est_opts)
             done, t0, mus = 0, time.perf_counter(), {}
             for cp in cps:
                 while done < cp:
-                    sel.n_iter = min(args.chunk, cp - done)
-                    sel.optimize(regularize=False, verbose=False)
-                    done += sel.n_iter
+                    n = min(args.chunk, cp - done)
+                    runner.run(n)                        # 'current': sel.optimize, as before
+                    done += n
                 state = torch.get_rng_state()
                 with torch.no_grad():
                     z_eval, _ = sel.mixture.sample(max(256, sel.batch_size))
@@ -98,6 +114,10 @@ def main():
                 sm = calculate_structural_metrics(sols, planted)
                 uf = calculate_metrics(sols, truth, args.p)["F1_Score"]
                 a = alpha[alpha > 0]
+                share = np.array([len(set(s) & truth) / args.D for s in raw])
+                topw = np.argsort(-alpha)[:args.m]
+                uf_w = calculate_metrics({f"w{i}": {"support": list(raw[k])} for i, k in enumerate(topw)},
+                                         truth, args.p)["F1_Score"]
                 w.writerow(dict(
                     prior=args.prior, rank=args.rank, seed=seed, K=K, step=cp, union_f1=uf,
                     sol_f1=sm["sol_f1"], dissim=mean_dissim(s["support"] for s in sols.values()),
@@ -105,10 +125,14 @@ def main():
                     elbo=elbo, raw_dissim=mean_dissim(raw), n_distinct=len(set(raw)),
                     perplexity=float(np.exp(-(a * np.log(a)).sum())),
                     seconds=time.perf_counter() - t0,
-                    supports=";".join(",".join(map(str, sorted(s["support"]))) for s in sols.values())))
+                    supports=";".join(",".join(map(str, sorted(s["support"]))) for s in sols.values()),
+                    estimator=args.estimator, alpha_max=float(alpha.max()), union_f1_topw=uf_w,
+                    signal_share_w=float(alpha @ share)))
                 f.flush()
                 mus[f"mu_{cp}"], mus[f"alpha_{cp}"] = mu, alpha
-                print(f"  {args.prior} sd={seed} K={K} step={cp} u={uf:.3f} elbo={elbo:.1f}", flush=True)
+                mus[f"var_{cp}"] = sel.mixture.get_variance().detach().cpu().numpy()
+                print(f"  {args.prior}/{args.estimator} sd={seed} K={K} step={cp} u={uf:.3f} u_w={uf_w:.3f} "
+                      f"elbo={elbo:.1f} amax={alpha.max():.2f}", flush=True)
             if args.dump_dir:
                 np.savez_compressed(os.path.join(args.dump_dir, f"{args.prior}_r{args.rank}_sd{seed}_K{K}.npz"), **mus)
     f.close()

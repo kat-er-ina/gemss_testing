@@ -30,6 +30,10 @@ Round 4 (plan sec. 11) adds, with defaults that reproduce Round 3 bit for bit:
                both from src/wrappers/mechanism_gemss.py
   --lik-scale  L: model noise s.d. = L * sigma, by passing x / (L sigma), y / (L sigma),
                so beta keeps its scale (L = 1: unchanged)
+Plan sec. 14 adds --estimator (src/wrappers/weightfix_gemss.py; mechanism joint only):
+  current (default, unchanged) | frozen | strat | score | ngvi | fixedpoint, and columns
+  estimator, alpha_max, tv_soft_unif / pip_mae_soft_unif (soft readout with the weights
+  replaced by 1/K).
   soft readouts (every run): per component k and coordinate j an inclusion
   probability a_kj, treated as independent within a component (as in their
   mixture), so PIP_j = sum_k alpha_k a_kj and pattern probabilities are mixtures
@@ -46,6 +50,7 @@ import torch
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from scipy.stats import norm
 from src.wrappers.mechanism_gemss import MechanismGEMSSWrapper
+from src.wrappers.weightfix_gemss import ESTIMATORS, WeightFixGEMSSWrapper
 
 from amvi import RegressionModel
 from amvi.data import make_one_triplet, make_two_triplets
@@ -109,6 +114,9 @@ def main():
     ap.add_argument("--mechanism", choices=["joint", "scalefixed", "kernel"], default="joint")
     ap.add_argument("--kernel-gamma", dest="kernel_gamma", type=float, default=100.0)
     ap.add_argument("--lik-scale", dest="lik_scale", type=float, default=1.0)
+    ap.add_argument("--estimator", choices=ESTIMATORS, default="current")
+    ap.add_argument("--ngvi-beta", dest="ngvi_beta", type=float, default=0.02)
+    ap.add_argument("--fp-eta", dest="fp_eta", type=float, default=1.0)
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
@@ -123,7 +131,10 @@ def main():
               "perplexity", "n_distinct_topD", "exact_mass_topD_supports",
               "mechanism", "lik_scale",
               "tv_soft", "pip_mae_soft", "tpr_soft", "fdp_soft", "size_soft",
-              "tv_tail", "pip_mae_tail", "tpr_tail", "fdp_tail", "size_tail"]
+              "tv_tail", "pip_mae_tail", "tpr_tail", "fdp_tail", "size_tail",
+              "estimator", "alpha_max", "tv_soft_unif", "pip_mae_soft_unif"]
+    if args.estimator != "current" and args.mechanism != "joint":
+        raise SystemExit("--estimator other than current requires --mechanism joint")
     f = open(args.out, "w", newline="")
     w = csv.DictWriter(f, fieldnames=fields); w.writeheader(); f.flush()
     for c in sel_cfgs:
@@ -149,16 +160,22 @@ def main():
         for K in args.K:
             torch.manual_seed(c["replicate"] * 1000 + K)
             t0 = time.perf_counter()
-            wr = MechanismGEMSSWrapper("regression", args.mechanism, K, args.D,
-                                       kernel_gamma=args.kernel_gamma,
-                                       lr=0.01, batch_size=16, n_iter=args.n_iter, **kw)
+            if args.estimator == "current":
+                wr = MechanismGEMSSWrapper("regression", args.mechanism, K, args.D,
+                                           kernel_gamma=args.kernel_gamma,
+                                           lr=0.01, batch_size=16, n_iter=args.n_iter, **kw)
+            else:
+                wr = WeightFixGEMSSWrapper("regression", args.estimator, K, args.D,
+                                           estimator_opts=dict(ngvi_beta=args.ngvi_beta, fp_eta=args.fp_eta),
+                                           lr=0.01, batch_size=16, n_iter=args.n_iter, **kw)
             # x and y both divided by the model noise s.d.: tempered likelihood, beta on its scale
             wr.fit(x / s_mod, y / s_mod)
             elbo, mu, var, alpha = wr.elbo_, wr.mu_, wr.var_, wr.alpha_
             row = dict(id=c["id"], design=args.design, rho=args.rho, replicate=c["replicate"],
                        arm=args.arm, K=K, elbo=elbo, seconds=time.perf_counter() - t0,
                        mse=float(np.mean((test @ (alpha @ mu - beta)) ** 2)),
-                       mechanism=args.mechanism, lik_scale=args.lik_scale)
+                       mechanism=args.mechanism, lik_scale=args.lik_scale,
+                       estimator=args.estimator, alpha_max=float(alpha.max()))
             for tag, sups in (("topD", [set(np.argsort(-np.abs(m))[:args.D].tolist()) for m in mu]),
                               ("thr", [set(np.flatnonzero(np.abs(m) > 3 * spike).tolist()) for m in mu])):
                 pq = dist_from_supports(alpha, sups, cols)
@@ -181,10 +198,14 @@ def main():
                             f"tpr_{tag}": float(sel_[active].mean()),
                             f"fdp_{tag}": float(np.sum(sel_ & ~active) / max(1, sel_.sum())),
                             f"size_{tag}": float(pip.sum())})
+                if tag == "soft":
+                    au = np.full(K, 1.0 / K); pu = au @ A
+                    row.update(tv_soft_unif=0.5 * np.abs(dist_soft(au, A, cols) - pe).sum(),
+                               pip_mae_soft_unif=float(np.abs(pu - ref["pip"]).mean()))
             a = alpha[alpha > 0]
             row["perplexity"] = float(np.exp(-(a * np.log(a)).sum()))
             w.writerow(row); f.flush()
-            print(f"  {c['id']} {args.arm}/{args.mechanism}/L{args.lik_scale} K={K} "
+            print(f"  {c['id']} {args.arm}/{args.mechanism}/{args.estimator}/L{args.lik_scale} K={K} "
                   f"tv={row['tv_topD']:.3f}/{row['tv_thr']:.3f} soft={row['tv_soft']:.3f} "
                   f"tail={row['tv_tail']:.3f} distinct={row['n_distinct_topD']} mse={row['mse']:.4f}", flush=True)
     f.close()
