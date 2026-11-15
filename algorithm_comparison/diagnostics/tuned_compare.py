@@ -216,12 +216,22 @@ def main():
                     help="override GEMSS optimisation steps (R2); default GEMSS_HP value")
     ap.add_argument("--dump-dir", dest="dump_dir", default=None,
                     help="save fitted parameters (GEMSS mu/var/alpha, BB-SSL beta/gamma) per seed/hp")
+    # Round 4 (special-issue comparison plan, sec. 11). Defaults reproduce the old runs.
+    ap.add_argument("--y-noise", dest="y_noise", type=float, default=0.0,
+                    help="R8b: add N(0, (s*sd(y))^2) RESPONSE noise to y (all methods); "
+                         "drawn from rng(10000 + seed), so it is the same across arms")
+    ap.add_argument("--lik-scale", dest="lik_scale", type=float, default=None,
+                    help="R8: GEMSS model noise s.d. on the STANDARDIZED clean y; implemented by "
+                         "dividing X and y by c = lik_scale * sd(clean y), which tempers the "
+                         "likelihood and leaves beta on its scale. Default: GEMSS's unit noise on raw y")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
     overrides = {k: v for k, v in (("var_spike", args.var_spike), ("n_iter", args.n_iter))
                  if v is not None}
     GEMSS_HP.update(overrides)            # every GEMSS branch reads GEMSS_HP at call time
+    if args.lik_scale is not None and args.method not in GEMSS_METHODS:
+        raise SystemExit("--lik-scale applies to GEMSS methods only")
     overrides_str = ";".join(f"{k}={v}" for k, v in overrides.items())
     if args.dump_dir:
         os.makedirs(args.dump_dir, exist_ok=True)
@@ -250,7 +260,8 @@ def main():
                                       "elbo", "n_iter", "n_iter_converged",
                                       "fit_seconds", "peak_mem_mb",
                                       "structure", "nonlinear", "noise_dist",
-                                      "latent_rank", "gemss_overrides"])
+                                      "latent_rank", "gemss_overrides",
+                                      "y_noise", "lik_scale_raw"])
     w.writeheader(); f.flush()
     gen = (generate_overlapping_dataset_equicorr if args.structure == "equicorr"
            else generate_overlapping_dataset)
@@ -260,6 +271,11 @@ def main():
             n_samples=args.n, n_features=args.p, n_solutions=3, sparsity=args.D,
             latent_rank=args.rank, overlap=args.overlap, noise_std=args.noise, nan_ratio=args.nan,
             binarize=False, nonlinear=args.nonlinear, noise_dist=args.noise_dist, seed=seed, **extra)
+        sd_clean = float(np.std(y))
+        if args.y_noise > 0:                  # R8b: response noise, identical across arms
+            y = y + np.random.default_rng(10000 + seed).normal(0.0, args.y_noise * sd_clean, size=len(y))
+        c_raw = 1.0 if args.lik_scale is None else args.lik_scale * sd_clean
+        Xf, yf = (X, y) if args.lik_scale is None else (X / c_raw, y / c_raw)
         for hp in grid(args.method):
             if args.torchseed:
                 import torch; torch.manual_seed(seed)
@@ -268,7 +284,7 @@ def main():
             fit_seconds = float("nan")
             try:
                 t_fit = time.perf_counter()
-                sols = fit_sols(args.method, hp, X, y, args.D, args.m, args.nrestarts, meta=meta)
+                sols = fit_sols(args.method, hp, Xf, yf, args.D, args.m, args.nrestarts, meta=meta)
                 fit_seconds = time.perf_counter() - t_fit
                 m = calculate_structural_metrics(sols, planted)
                 uf = calculate_metrics(sols, set(truth), X.shape[1])["F1_Score"]
@@ -297,7 +313,8 @@ def main():
                         "fit_seconds": fit_seconds, "peak_mem_mb": _peak_mem_mb(),
                         "structure": args.structure, "nonlinear": int(args.nonlinear),
                         "noise_dist": args.noise_dist,
-                        "latent_rank": args.rank, "gemss_overrides": overrides_str})
+                        "latent_rank": args.rank, "gemss_overrides": overrides_str,
+                        "y_noise": args.y_noise, "lik_scale_raw": c_raw})
             f.flush()
             if args.dump_dir:
                 arrs = {k: meta[k] for k in ("mu", "var", "alpha", "bb_beta", "bb_gamma")
