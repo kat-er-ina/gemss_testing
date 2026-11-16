@@ -117,6 +117,8 @@ def main():
     ap.add_argument("--estimator", choices=ESTIMATORS, default="current")
     ap.add_argument("--ngvi-beta", dest="ngvi_beta", type=float, default=0.02)
     ap.add_argument("--fp-eta", dest="fp_eta", type=float, default=1.0)
+    ap.add_argument("--anneal-omega0", dest="anneal_omega0", type=float, default=None)
+    ap.add_argument("--anneal-steps", dest="anneal_steps", type=int, default=4000)
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
@@ -132,7 +134,7 @@ def main():
               "mechanism", "lik_scale",
               "tv_soft", "pip_mae_soft", "tpr_soft", "fdp_soft", "size_soft",
               "tv_tail", "pip_mae_tail", "tpr_tail", "fdp_tail", "size_tail",
-              "estimator", "alpha_max", "tv_soft_unif", "pip_mae_soft_unif"]
+              "estimator", "alpha_max", "tv_soft_unif", "pip_mae_soft_unif", "anneal"]
     if args.estimator != "current" and args.mechanism != "joint":
         raise SystemExit("--estimator other than current requires --mechanism joint")
     f = open(args.out, "w", newline="")
@@ -166,7 +168,9 @@ def main():
                                            lr=0.01, batch_size=16, n_iter=args.n_iter, **kw)
             else:
                 wr = WeightFixGEMSSWrapper("regression", args.estimator, K, args.D,
-                                           estimator_opts=dict(ngvi_beta=args.ngvi_beta, fp_eta=args.fp_eta),
+                                           estimator_opts=dict(ngvi_beta=args.ngvi_beta, fp_eta=args.fp_eta,
+                                                               anneal=(args.anneal_omega0, args.anneal_steps)
+                                                               if args.anneal_omega0 else None),
                                            lr=0.01, batch_size=16, n_iter=args.n_iter, **kw)
             # x and y both divided by the model noise s.d.: tempered likelihood, beta on its scale
             wr.fit(x / s_mod, y / s_mod)
@@ -175,7 +179,8 @@ def main():
                        arm=args.arm, K=K, elbo=elbo, seconds=time.perf_counter() - t0,
                        mse=float(np.mean((test @ (alpha @ mu - beta)) ** 2)),
                        mechanism=args.mechanism, lik_scale=args.lik_scale,
-                       estimator=args.estimator, alpha_max=float(alpha.max()))
+                       estimator=args.estimator, alpha_max=float(alpha.max()),
+                       anneal=f"{args.anneal_omega0}/{args.anneal_steps}" if args.anneal_omega0 else "none")
             for tag, sups in (("topD", [set(np.argsort(-np.abs(m))[:args.D].tolist()) for m in mu]),
                               ("thr", [set(np.flatnonzero(np.abs(m) > 3 * spike).tolist()) for m in mu])):
                 pq = dist_from_supports(alpha, sups, cols)

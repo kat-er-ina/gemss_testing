@@ -92,6 +92,9 @@ def main():
     ap.add_argument("--task", choices=["regression", "classification"], default="regression")
     ap.add_argument("--var-slab", dest="var_slab", type=float, default=None)
     ap.add_argument("--arm", default=None, help="label written to the 'arm' column (default: estimator)")
+    ap.add_argument("--anneal-omega0", dest="anneal_omega0", type=float, default=None,
+                    help="likelihood tempering: omega rises geometrically from this value to 1 (plan sec. 19)")
+    ap.add_argument("--anneal-steps", dest="anneal_steps", type=int, default=4000)
     ap.add_argument("--strat-draws", dest="strat_draws", type=int, default=None)
     ap.add_argument("--ngvi-beta", dest="ngvi_beta", type=float, default=0.02)
     ap.add_argument("--ngvi-beta-w", dest="ngvi_beta_w", type=float, default=None)
@@ -118,9 +121,11 @@ def main():
     fields = ["prior", "rank", "seed", "K", "step", "union_f1", "sol_f1", "dissim",
               "signal_share_topD", "elbo", "raw_dissim", "n_distinct", "perplexity",
               "seconds", "supports", "estimator", "alpha_max", "union_f1_topw", "signal_share_w",
-              "arm", "init", "overlap", "task", "p", "D"]
+              "arm", "init", "overlap", "task", "p", "D", "anneal"]
     est_opts = dict(strat_draws=args.strat_draws, ngvi_beta=args.ngvi_beta, ngvi_beta_w=args.ngvi_beta_w,
-                    fp_every=args.fp_every, fp_draws=args.fp_draws, fp_eta=args.fp_eta)
+                    fp_every=args.fp_every, fp_draws=args.fp_draws, fp_eta=args.fp_eta,
+                    anneal=(args.anneal_omega0, args.anneal_steps) if args.anneal_omega0 else None)
+    anneal_tag = f"{args.anneal_omega0}/{args.anneal_steps}" if args.anneal_omega0 else "none"
     f = open(args.out, "w", newline="")
     w = csv.DictWriter(f, fieldnames=fields); w.writeheader(); f.flush()
     cps = sorted(args.checkpoints)
@@ -178,7 +183,7 @@ def main():
                     supports=";".join(",".join(map(str, sorted(s["support"]))) for s in sols.values()),
                     estimator=args.estimator, alpha_max=float(alpha.max()), union_f1_topw=uf_w,
                     signal_share_w=float(alpha @ share), arm=arm, init=args.init, overlap=args.overlap,
-                    task=args.task, p=args.p, D=args.D))
+                    task=args.task, p=args.p, D=args.D, anneal=anneal_tag))
                 f.flush()
                 mus[f"mu_{cp}"], mus[f"alpha_{cp}"] = mu, alpha
                 mus[f"var_{cp}"] = var_t.cpu().numpy()

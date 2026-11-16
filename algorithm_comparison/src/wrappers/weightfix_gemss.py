@@ -122,9 +122,10 @@ class RegressionTarget(Target):
             raise ValueError("weightfix estimators do not handle missing X")
         self.sel, self.prior, self.X, self.y = sel, sel.prior, sel.X, sel.y
         self.colsq = (self.X ** 2).sum(0)
+        self.omega = 1.0                              # likelihood tempering (plan sec. 19, annealing)
 
     def logp(self, z):
-        return self.sel.prior.log_prob(z) + self.sel.log_likelihood(z)
+        return self.sel.prior.log_prob(z) + self.omega * self.sel.log_likelihood(z)
 
     def _prior_terms(self, z):
         P = self.prior
@@ -165,7 +166,8 @@ class RegressionTarget(Target):
     def terms(self, z):
         lp, gp, Hp = self._prior_terms(z)
         res = z @ self.X.T - self.y[None]
-        return lp - 0.5 * (res ** 2).sum(-1), gp - res @ self.X, Hp - self.colsq[None]
+        w = self.omega
+        return lp - 0.5 * w * (res ** 2).sum(-1), gp - w * (res @ self.X), Hp - w * self.colsq[None]
 
 
 class GaussMixTarget(Target):
@@ -195,7 +197,8 @@ class WeightFixRunner:
     def __init__(self, mix, target: Target, estimator: str, batch_size: int = 16, lr: float = 0.01,
                  sel: Optional[BayesianFeatureSelector] = None, strat_draws: Optional[int] = None,
                  ngvi_beta: float = 0.02, ngvi_beta_w: Optional[float] = None,
-                 fp_every: int = 100, fp_draws: int = 64, fp_eta: float = 1.0, logit_clip: float = 80.0):
+                 fp_every: int = 100, fp_draws: int = 64, fp_eta: float = 1.0, logit_clip: float = 80.0,
+                 anneal: Optional[tuple] = None):
         if estimator not in ESTIMATORS:
             raise ValueError(f"unknown estimator {estimator}")
         self.mix, self.target, self.est, self.sel = mix, target, estimator, sel
@@ -206,6 +209,10 @@ class WeightFixRunner:
             self.beta_w = 0.0
         self.fp_every, self.fp_draws, self.fp_eta, self.clip = fp_every, fp_draws, fp_eta, logit_clip
         self.t = 0
+        # annealing (plan sec. 19): likelihood weight omega(t) = omega0 ** (1 - t / T) for t < T, then 1
+        self.anneal = tuple(anneal) if anneal and anneal[0] is not None and anneal[0] < 1 else None
+        if self.anneal and estimator in ("current", "frozen") and sel is not None:
+            raise ValueError("annealing needs the generic loop: use f0_joint instead of current")
         if estimator not in ("current", "frozen") + F0_GENERIC:
             mix.get_alpha = types.MethodType(_stable_get_alpha, mix)
         if estimator in ("frozen", "fixedpoint", "f0_ind"):
@@ -346,6 +353,12 @@ class WeightFixRunner:
         la = la - torch.logsumexp(la, 0)
         self.mix._log_alpha.copy_(la[:-1] - la[-1])
 
+    def omega_at(self, t: int) -> float:
+        if not self.anneal:
+            return 1.0
+        w0, T = self.anneal
+        return 1.0 if t >= T else float(w0 ** (1.0 - t / T))
+
     def run(self, n_steps: int) -> List[float]:
         hist: List[float] = []
         if self.est in ("current", "frozen") and self.sel is not None:
@@ -354,6 +367,8 @@ class WeightFixRunner:
             self.t += n_steps
             return hist
         for _ in range(n_steps):
+            if self.anneal:
+                self.target.omega = self.omega_at(self.t)
             if self.est in ("current", "frozen"):
                 hist.append(self._step_generic_current())
             elif self.est == "strat":
@@ -373,6 +388,8 @@ class WeightFixRunner:
                 if (self.t + 1) % self.fp_every == 0:
                     self._fixedpoint_update()
             self.t += 1
+        if self.anneal:
+            self.target.omega = self.omega_at(self.t)
         self.sync()
         return hist
 

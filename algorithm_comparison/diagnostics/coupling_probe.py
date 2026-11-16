@@ -41,18 +41,18 @@ def selector(prior, X, y, K):
                                    lr=0.01, batch_size=16, n_iter=1, **kw)
 
 
-def run_arm(est, prior, X, y, K, seed, init):
+def run_arm(est, prior, X, y, K, seed, init, anneal=None):
     torch.manual_seed(seed)
     sel = selector(prior, X, y, K)
     apply_init(sel.mixture, init, X, y, D, seed)
-    r = make_runner(sel, est)
+    r = make_runner(sel, est, anneal=anneal)
     snaps, done = {}, 0
     for cp in CPS:
         if cp > done:
             r.run(cp - done); done = cp
         mix = sel.mixture
         snaps[cp] = (mix.mu.detach().clone(), mix.get_variance().detach().clone(), log_alpha(mix).detach().clone())
-    return sel, snaps
+    return sel, snaps, r
 
 
 def coupling_stats(mu, var, la, target, n=64, seed=0):
@@ -89,24 +89,26 @@ def readout(mu, truth, planted):
 
 
 def task(args):
-    opt, prior, seed, K, ov, init = args
+    opt, prior, seed, K, ov, init, anneal = args
     torch.set_num_threads(1)
     X, y, truth, planted = generate_overlapping_dataset(
         n_samples=N, n_features=P, n_solutions=3, sparsity=D, latent_rank=2, overlap=ov, noise_std=0.05,
         nan_ratio=0.0, binarize=False, nonlinear=False, noise_dist="gauss", seed=seed)
     truth = set(truth)
     t0 = time.perf_counter()
-    selJ, sJ = run_arm(ARMS[opt][0], prior, X, y, K, seed, init)
-    _, sD = run_arm(ARMS[opt][1], prior, X, y, K, seed, init)
+    selJ, sJ, rJ = run_arm(ARMS[opt][0], prior, X, y, K, seed, init, anneal)
+    _, sD, _ = run_arm(ARMS[opt][1], prior, X, y, K, seed, init, anneal)
     target = RegressionTarget(selJ)
     rows = []
     for cp in CPS:
         muJ, varJ, aJ = sJ[cp]; muD = sD[cp][0]
+        target.omega = rJ.omega_at(cp)                     # tempered objective at this checkpoint
         st = coupling_stats(muJ, varJ, aJ, target, seed=cp)
         same = np.mean([set(np.argsort(-np.abs(a))[:D].tolist()) == set(np.argsort(-np.abs(b))[:D].tolist())
                         for a, b in zip(muJ.numpy(), muD.numpy())])
         ufJ, ndJ = readout(muJ, truth, planted); ufD, ndD = readout(muD, truth, planted)
-        rows.append(dict(opt=opt, prior=prior, seed=seed, K=K, overlap=ov, init=init, step=cp, **st,
+        rows.append(dict(opt=opt, prior=prior, seed=seed, K=K, overlap=ov, init=init, step=cp, omega=target.omega,
+                         anneal=f"{anneal[0]}/{anneal[1]}" if anneal else "none", **st,
                          rel_diff=float((muJ - muD).abs().max() / muJ.abs().max().clamp_min(1e-12)),
                          same_topD=float(same), uf_J=ufJ, uf_Dec=ufD, nd_J=ndJ, nd_Dec=ndD,
                          var_med=float(varJ.median()), alpha_max=float(aJ.exp().max())))
@@ -125,8 +127,10 @@ def main():
     ap.add_argument("--overlaps", type=int, nargs="+", default=[0, 8])
     ap.add_argument("--inits", nargs="+", default=["default"])
     ap.add_argument("--workers", type=int, default=8)
+    ap.add_argument("--anneals", nargs="+", default=["none"], help="none or omega0/steps, e.g. 0.03/4000")
     a = ap.parse_args()
-    jobs = list(itertools.product(a.opts, a.priors, a.seeds, a.K, a.overlaps, a.inits))
+    anns = [None if x == "none" else (float(x.split("/")[0]), int(x.split("/")[1])) for x in a.anneals]
+    jobs = list(itertools.product(a.opts, a.priors, a.seeds, a.K, a.overlaps, a.inits, anns))
     jobs.sort(key=lambda j: (-j[3], j[0]))                  # big K first
     with Pool(a.workers) as pool, open(a.out, "w", newline="") as f:
         w = None
