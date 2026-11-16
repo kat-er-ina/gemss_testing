@@ -3,7 +3,9 @@
 For each (optimiser, prior, seed, K, overlap, start) the joint fit J and the decoupled fit Dec are run
 from the same seed (same starting means, same random numbers); Dec differs only in log q (own component).
 At fine checkpoints, on J's state:
-  leak        mean over components of 1 - own responsibility for own draws (actual weights)
+  leak        mean over components of 1 - own responsibility for own draws (actual weights, as stable
+              log weights: weights below float32 range do not count as leaked)
+  leak_unif   the same with uniform weights (geometric overlap only)
   leak_frac   share of components with leak > 1 %
   gshare      ||d/dmu_c of the coupling term sum_k a_k E_qk[log r_k]|| / ||d/dmu_c of J's ELBO||,
               mean and max over components (64 reparameterised draws per component)
@@ -25,7 +27,7 @@ from src.hard_data_factory import generate_overlapping_dataset
 from src.evaluation import calculate_metrics
 from ensemble_parity import cluster_supports
 from gemss.feature_selection.inference import BayesianFeatureSelector
-from src.wrappers.weightfix_gemss import make_runner, apply_init, comp_logpdf, RegressionTarget
+from src.wrappers.weightfix_gemss import make_runner, apply_init, comp_logpdf, RegressionTarget, log_alpha
 
 CPS = [0, 10, 25, 50, 100, 200, 400, 700, 1000, 1500, 2000, 4000, 6000]
 ARMS = dict(f0=("f0_joint", "f0_dec"), f3=("ngvi", "ngvi_dec"))
@@ -49,16 +51,17 @@ def run_arm(est, prior, X, y, K, seed, init):
         if cp > done:
             r.run(cp - done); done = cp
         mix = sel.mixture
-        snaps[cp] = (mix.mu.detach().clone(), mix.get_variance().detach().clone(), mix.get_alpha().detach().clone())
+        snaps[cp] = (mix.mu.detach().clone(), mix.get_variance().detach().clone(), log_alpha(mix).detach().clone())
     return sel, snaps
 
 
-def coupling_stats(mu, var, alpha, target, n=64, seed=0):
+def coupling_stats(mu, var, la, target, n=64, seed=0):
     K, p = mu.shape
+    alpha = la.exp()
     g = torch.Generator().manual_seed(seed)
     mu_t = mu.clone().requires_grad_(True)
     z = (mu_t[:, None, :] + torch.randn(K, n, p, generator=g) * var.sqrt()[:, None, :]).reshape(K * n, p)
-    lpk = comp_logpdf(z, mu_t, var) + torch.log(alpha)[None]
+    lpk = comp_logpdf(z, mu_t, var) + la[None]
     lq = torch.logsumexp(lpk, -1)
     c = torch.arange(K).repeat_interleave(n)
     logr = lpk[torch.arange(K * n), c] - lq
@@ -69,9 +72,13 @@ def coupling_stats(mu, var, alpha, target, n=64, seed=0):
     ge = torch.autograd.grad(elbo, mu_t)[0]
     share = (gc.norm(dim=1) / ge.norm(dim=1).clamp_min(1e-30)).numpy()
     leak = (1 - logr.detach().exp()).view(K, n).mean(1).numpy()
+    with torch.no_grad():
+        lpu = comp_logpdf(z.detach(), mu, var)
+        leak_u = (1 - (lpu[torch.arange(K * n), c] - torch.logsumexp(lpu, -1)).exp()).view(K, n).mean(1).numpy()
     d2 = (((mu[:, None] - mu[None]) ** 2) / ((var[:, None] + var[None]) / 2)).sum(-1)
     iu = torch.triu_indices(K, K, 1)
-    return dict(leak=float(leak.mean()), leak_frac=float((leak > 0.01).mean()), gshare=float(share.mean()),
+    return dict(leak=float(leak.mean()), leak_frac=float((leak > 0.01).mean()), leak_unif=float(leak_u.mean()),
+                leak_unif_frac=float((leak_u > 0.01).mean()), gshare=float(share.mean()),
                 gshare_max=float(share.max()), maha_min=float(d2[iu[0], iu[1]].min().sqrt()))
 
 
@@ -102,7 +109,7 @@ def task(args):
         rows.append(dict(opt=opt, prior=prior, seed=seed, K=K, overlap=ov, init=init, step=cp, **st,
                          rel_diff=float((muJ - muD).abs().max() / muJ.abs().max().clamp_min(1e-12)),
                          same_topD=float(same), uf_J=ufJ, uf_Dec=ufD, nd_J=ndJ, nd_Dec=ndD,
-                         var_med=float(varJ.median()), alpha_max=float(aJ.max())))
+                         var_med=float(varJ.median()), alpha_max=float(aJ.exp().max())))
     print(f"  {opt} {prior} sd{seed} K{K} ov{ov} {init}: leak@100 {rows[4]['leak']:.3f} @6k {rows[-1]['leak']:.3f} "
           f"rel_diff@6k {rows[-1]['rel_diff']:.1e} ({time.perf_counter() - t0:.0f}s)", flush=True)
     return rows
