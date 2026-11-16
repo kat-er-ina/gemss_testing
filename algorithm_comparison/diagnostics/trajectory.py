@@ -157,7 +157,7 @@ def main():
                     mu_t, var_t, alpha_t = sel.mixture.mu.detach(), sel.mixture.get_variance().detach(), \
                         sel.mixture.get_alpha().detach()
                 torch.set_rng_state(state)
-                mu = mu_t.cpu().numpy()
+                mu = mu_t.cpu().numpy().copy()     # copy: .numpy() of the parameter is a view that later steps overwrite
                 alpha = alpha_t.cpu().numpy()
                 raw = [tuple(sorted(np.argsort(np.abs(mu[k]))[::-1][:args.D].tolist())) for k in range(K)]
                 sols = cluster_supports(raw, args.p, args.m, args.D)

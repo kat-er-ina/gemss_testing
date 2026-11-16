@@ -55,9 +55,10 @@ def jac(a, b):
 
 def dump_metrics(df, dumpdir_of):
     out = []
+    last = df.step.max()     # dumps written before 2026-11-16 hold the FINAL means under every mu_<step> key
     for _, r in df.iterrows():
         f = os.path.join(C, "dumps", dumpdir_of(r), f"{r.prior}_r2_sd{r.seed}_K{r.K}.npz")
-        if not os.path.exists(f):
+        if r.step != last or not os.path.exists(f):
             out.append((np.nan, np.nan, np.nan)); continue
         mu = np.load(f)[f"mu_{r.step}"]
         sups = [set(np.argsort(-np.abs(m))[:r.D].tolist()) for m in mu]
@@ -187,3 +188,22 @@ for a, r in (("current", "f0_dec"), ("ngvi", "ngvi_dec")):
         for (d, rho), g in b.groupby(["design", "rho"]):
             pv = g.pivot_table(index="id", columns="estimator", values="tv_soft")
             print(f"      {d} {rho}: {ci(pv[a] - pv[r], 0.02)}")
+
+# ====================================================================== weight per planted solution at 6k
+# Replaces the invalid 6k rows of wfix_alt_mass (plan sec. 15): B1 dumps hold valid means AND weights at
+# their final checkpoint (6000). Components assigned by >= half of a solution's private features.
+print("\n\n== Weight on best / 2nd / 3rd planted solution and on none, 6k steps (B1 dumps, final checkpoint)")
+rows = []
+for _, r in b1[(b1.step == 6000) & b1.arm.isin(["F0J", "F3J", "F3Dec"]) & b1.K.isin([6, 12, 24])].iterrows():
+    z = np.load(os.path.join(C, "dumps", f"B1_{r.arm}_{r.prior}_ov{r.overlap}", f"{r.prior}_r2_sd{r.seed}_K{r.K}.npz"))
+    mu, al = z["mu_6000"], z["alpha_6000"]
+    pl = planted(int(r.seed), int(r.overlap), 10, 200, "regression"); sh = set.intersection(*pl)
+    priv = [q - sh for q in pl]; w = np.zeros(4)
+    for k, m in enumerate(mu):
+        top = set(np.argsort(-np.abs(m))[:10].tolist()); ov = [len(top & q) for q in priv]
+        j = int(np.argmax(ov)); w[j if ov[j] >= len(priv[j]) / 2 else 3] += al[k]
+    ws = np.sort(w[:3])[::-1]
+    rows.append(dict(arm=r.arm, prior=r.prior, overlap=r.overlap, K=r.K, w1=ws[0], w2=ws[1], w3=ws[2], none=w[3]))
+wt = pd.DataFrame(rows)
+print(wt.groupby(["prior", "overlap", "arm", "K"])[["w1", "w2", "w3", "none"]].mean().round(2)
+      .loc[(slice(None), [4, 8]), :].to_string())

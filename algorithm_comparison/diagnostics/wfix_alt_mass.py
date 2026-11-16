@@ -30,7 +30,7 @@ for arm, d in DIRS.items():
                 if not os.path.exists(f):
                     continue
                 z = np.load(f)
-                for step in (6000, 48000):
+                for step in (48000,):          # only the final checkpoint is valid in these dumps
                     if f"mu_{step}" not in z:
                         continue
                     mu, al = z[f"mu_{step}"], z[f"alpha_{step}"]

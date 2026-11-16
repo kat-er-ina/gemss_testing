@@ -117,6 +117,8 @@ extra = []
 for _, r in cur.iterrows():           # weight-aware columns for current from the R5 dumps
     z = np.load(os.path.join(root, f"r3/dumps/R5_{r.prior}/{r.prior}_r2_sd{r.seed}_K{r.K}.npz"))
     mu, al = z[f"mu_{r.step}"], z[f"alpha_{r.step}"]
+    if r.step != 48000:               # the dumps hold the FINAL means under every mu_<step> key (view bug);
+        extra.append((float(al.max()), np.nan, np.nan)); continue     # weights are stored correctly
     raw = [tuple(sorted(np.argsort(np.abs(m))[::-1][:10].tolist())) for m in mu]
     share = np.array([len(set(s) & truth[r.seed]) / 10 for s in raw])
     topw = np.argsort(-al)[:3]

@@ -14,7 +14,7 @@ from scipy.special import logsumexp
 root = sys.argv[1]
 dd = lambda a, p: os.path.join(root, f"wfix/dumps/R5w_{a}_{p}")
 rows = []
-for p, s, K, step in itertools.product(("sss", "ss"), range(1, 26), (3, 6, 12, 24), (6000, 48000)):
+for p, s, K, step in itertools.product(("sss", "ss"), range(1, 26), (3, 6, 12, 24), (48000,)):   # final only
     a = np.load(os.path.join(dd("ngvi", p), f"{p}_r2_sd{s}_K{K}.npz"))
     b = np.load(os.path.join(dd("ngvi_frozen", p), f"{p}_r2_sd{s}_K{K}.npz"))
     ma, mb = a[f"mu_{step}"], b[f"mu_{step}"]
@@ -25,7 +25,7 @@ print("== (1) F3 vs F3 frozen-w components")
 print(d.groupby(["prior", "step", "K"]).agg(same_topD=("same_topD", "mean"), med_rel=("rel", "median"),
                                             max_rel=("rel", "max")).round(4).to_string())
 
-print("\n== (2) responsibility leak at 6k, uniform weights")
+print("\n== (2) responsibility leak at 48k (final), uniform weights")
 rng = np.random.default_rng(0)
 for p in ("sss", "ss"):
     for arm in ("frozen", "ngvi_frozen"):
@@ -33,7 +33,7 @@ for p in ("sss", "ss"):
         for K in (6, 12, 24):
             leak = []
             for s in range(1, 26):
-                z = np.load(os.path.join(dd(arm, p), f"{p}_r2_sd{s}_K{K}.npz")); mu, var = z["mu_6000"], z["var_6000"]
+                z = np.load(os.path.join(dd(arm, p), f"{p}_r2_sd{s}_K{K}.npz")); mu, var = z["mu_48000"], z["var_48000"]   # final checkpoint only
                 for c in range(K):
                     x = mu[c] + rng.standard_normal((100, mu.shape[1])) * np.sqrt(var[c])
                     lp = -0.5 * (((x[:, None] - mu[None]) ** 2) / var[None] + np.log(2 * np.pi * var[None])).sum(-1)
