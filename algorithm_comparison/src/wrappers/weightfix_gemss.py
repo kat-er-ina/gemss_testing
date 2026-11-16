@@ -54,7 +54,19 @@ from gemss.feature_selection.models import SpikeAndSlabPrior, StructuredSpikeAnd
 
 from .mechanism_gemss import MechanismGEMSSWrapper, _elbo_plateau_iter
 
-ESTIMATORS = ("current", "frozen", "strat", "score", "ngvi", "ngvi_mix", "fixedpoint", "ngvi_frozen")
+ESTIMATORS = ("current", "frozen", "strat", "score", "ngvi", "ngvi_mix", "fixedpoint", "ngvi_frozen",
+              "f0_joint", "f0_dec", "f0_ind", "ngvi_dec")
+# Coupling test (plan sec. 18):
+#   f0_joint  F0's step (multinomial draws, Adam, published get_alpha) through the generic path, so that
+#             f0_dec differs from it only in log q.
+#   f0_dec    as f0_joint, but each draw's log q uses its own component only: log a_k + log N_k(z).
+#             Removes exactly the entropy coupling between components.
+#   f0_ind    K independent one-component fits: strat_draws (default ceil(16/K)) draws per component,
+#             objective sum_k E_qk[log p - log N_k], weights fixed (irrelevant). One Adam over all
+#             parameters is equivalent to K separate Adams (Adam is elementwise).
+#   ngvi_dec  ngvi with the own-component log q terms (= independent NGD fits; the weights converge to
+#             a_k ~ exp(per-component ELBO), i.e. a post-hoc weighting).
+F0_GENERIC = ("f0_joint", "f0_dec", "f0_ind")
 # ngvi_frozen (plan sec. 16): the ngvi updates for means and precisions with the weight step set to 0,
 # i.e. weights stay at their uniform start; separates "NGD components" from "learned weights".
 LOG2PI = math.log(2 * math.pi)
@@ -194,14 +206,14 @@ class WeightFixRunner:
             self.beta_w = 0.0
         self.fp_every, self.fp_draws, self.fp_eta, self.clip = fp_every, fp_draws, fp_eta, logit_clip
         self.t = 0
-        if estimator not in ("current", "frozen"):
+        if estimator not in ("current", "frozen") + F0_GENERIC:
             mix.get_alpha = types.MethodType(_stable_get_alpha, mix)
-        if estimator in ("frozen", "fixedpoint"):
+        if estimator in ("frozen", "fixedpoint", "f0_ind"):
             mix._log_alpha.requires_grad_(False)
-        if estimator in ("current", "frozen", "strat", "score", "fixedpoint"):
+        if estimator in ("current", "frozen", "strat", "score", "fixedpoint") + F0_GENERIC:
             self.opt = sel.opt if sel is not None else torch.optim.Adam(
                 [q for q in mix.parameters()], lr=lr)
-        if estimator in ("ngvi", "ngvi_mix", "ngvi_frozen"):
+        if estimator in ("ngvi", "ngvi_mix", "ngvi_frozen", "ngvi_dec"):
             with torch.no_grad():
                 self.mu = mix.mu.detach().clone()
                 self.prec = 1.0 / mix.get_variance().detach().clone()
@@ -220,7 +232,7 @@ class WeightFixRunner:
 
     def sync(self):
         """Write ngvi state back into the mixture (readouts use the mixture)."""
-        if self.est not in ("ngvi", "ngvi_mix", "ngvi_frozen"):
+        if self.est not in ("ngvi", "ngvi_mix", "ngvi_frozen", "ngvi_dec"):
             return
         with torch.no_grad():
             self.mix.mu.copy_(self.mu)
@@ -234,6 +246,27 @@ class WeightFixRunner:
         lq = self.mix.log_prob(z)
         h = self.target.logp(z) - lq
         self.opt.zero_grad(); (-h.mean()).backward(); self.opt.step()
+        return float(h.mean())
+
+    def _step_f0(self, decoupled: bool):
+        z, idx = self.mix.sample(self.B)
+        if decoupled:
+            var = self.mix.get_variance()
+            lq = (comp_logpdf(z, self.mix.mu, var).gather(1, idx[:, None]).squeeze(1)
+                  + torch.log(self.mix.get_alpha())[idx])
+        else:
+            lq = self.mix.log_prob(z)
+        h = self.target.logp(z) - lq
+        self.opt.zero_grad(); (-h.mean()).backward(); self.opt.step()
+        return float(h.mean())
+
+    def _step_f0_ind(self):
+        K, n, p = self.K, self.strat_n, self.p
+        mu, var = self.mix.mu, self.mix.get_variance()
+        z = mu[:, None, :] + torch.randn(K, n, p, device=var.device) * var.sqrt()[:, None, :]
+        lq = -0.5 * (torch.log(2 * torch.pi * var)[:, None, :] + (z - mu[:, None, :]) ** 2 / var[:, None, :]).sum(-1)
+        h = self.target.logp(z.reshape(K * n, p)).view(K, n) - lq
+        self.opt.zero_grad(); (-h.mean(1).sum()).backward(); self.opt.step()
         return float(h.mean())
 
     def _step_strat(self):
@@ -271,7 +304,13 @@ class WeightFixRunner:
         la = F.log_softmax(torch.cat([self.logit, self.logit.new_zeros(1)]), 0)
         var = 1.0 / self.prec
         z = (self.mu[:, None, :] + torch.randn(K, n, p, device=var.device) * var.sqrt()[:, None, :]).reshape(K * n, p)
-        lq, gq, Hq, _ = logq_terms(z, self.mu, var, la)
+        if self.est == "ngvi_dec":                           # own component only (no coupling)
+            c = torch.arange(K, device=var.device).repeat_interleave(n)
+            d, vc = z - self.mu[c], var[c]
+            lq = la[c] - 0.5 * (torch.log(2 * torch.pi * vc) + d ** 2 / vc).sum(-1)
+            gq, Hq = -d / vc, -1.0 / vc
+        else:
+            lq, gq, Hq, _ = logq_terms(z, self.mu, var, la)
         lp, gp, Hp = self.target.terms(z)
         h = (lq - lp).view(K, n).mean(1)
         gc = (gq - gp).view(K, n, p).mean(1)
@@ -321,7 +360,11 @@ class WeightFixRunner:
                 hist.append(self._step_strat())
             elif self.est == "score":
                 hist.append(self._step_score())
-            elif self.est in ("ngvi", "ngvi_frozen"):
+            elif self.est in ("f0_joint", "f0_dec"):
+                hist.append(self._step_f0(self.est == "f0_dec"))
+            elif self.est == "f0_ind":
+                hist.append(self._step_f0_ind())
+            elif self.est in ("ngvi", "ngvi_frozen", "ngvi_dec"):
                 hist.append(self._step_ngvi())
             elif self.est == "ngvi_mix":
                 hist.append(self._step_ngvi_mix())
@@ -332,6 +375,49 @@ class WeightFixRunner:
             self.t += 1
         self.sync()
         return hist
+
+
+INITS = ("default", "common_zero", "common_screen", "overlap", "screen_diverse")
+
+
+def screen_scores(X, y):
+    """|corr(X_j, y)| (as in init_probe screen_conf)."""
+    Xf = np.nan_to_num(np.asarray(X, float), nan=0.0); yc = np.asarray(y, float) - np.mean(y)
+    return np.abs((Xf - Xf.mean(0)).T @ yc / len(yc)) / (Xf.std(0) * yc.std() + 1e-12)
+
+
+@torch.no_grad()
+def apply_init(mix, mode: str, X, y, D: int, seed: int, jitter: float = 0.01, overlap_scale: float = 0.1,
+               mag: float = 2.0, conf_var: float = 0.1):
+    """Starting point options for the coupling test (plan sec. 18); call BEFORE make_runner.
+    default        GEMSS: mu ~ N(0, 1), var = softplus(0), uniform weights (no change)
+    common_zero    every component at 0 + jitter * N(0, 1)            (full overlap; default var)
+    common_screen  every component at one screen point + jitter       (top-D |corr| features = mag)
+    overlap        mu ~ N(0, overlap_scale^2): distinct but overlapping starts (default var)
+    screen_diverse init_probe screen_conf: per component D features drawn from the top-|corr| pool,
+                   prob. proportional to score, set to mag; var = conf_var"""
+    if mode == "default":
+        return
+    K, p = mix.mu.shape
+    g = torch.Generator().manual_seed(10_000 + seed)
+    rng = np.random.default_rng(10_000 + seed)
+    if mode == "common_zero":
+        mu = jitter * torch.randn(K, p, generator=g)
+    elif mode == "common_screen":
+        mu0 = torch.zeros(p); mu0[np.argsort(screen_scores(X, y))[::-1][:D].copy()] = mag
+        mu = mu0[None] + jitter * torch.randn(K, p, generator=g)
+    elif mode == "overlap":
+        mu = overlap_scale * torch.randn(K, p, generator=g)
+    elif mode == "screen_diverse":
+        sc = screen_scores(X, y); M = min(p, max(K * D, 4 * D))
+        pool = np.argsort(sc)[::-1][:M]; w = sc[pool] / sc[pool].sum()
+        mu = torch.zeros(K, p)
+        for k in range(K):
+            mu[k, rng.choice(pool, size=D, replace=False, p=w)] = mag
+        mix._log_var.fill_(math.log(math.expm1(conf_var)))
+    else:
+        raise ValueError(f"unknown init {mode}")
+    mix.mu.copy_(mu.to(mix.mu))
 
 
 def make_runner(sel: BayesianFeatureSelector, estimator: str, **opts) -> WeightFixRunner:

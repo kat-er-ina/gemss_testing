@@ -17,6 +17,11 @@ The torch RNG state is saved and restored around every checkpoint evaluation,
 so the optimisation path is identical to a single uninterrupted run: the
 6000-step checkpoint reproduces tuned_compare --torchseed (R4, r = 2) and the
 24000-step checkpoint reproduces R2.
+Plan sec. 18 (coupling test) adds: --init (start options of weightfix_gemss.apply_init), the
+coupling estimators f0_joint / f0_dec / f0_ind / ngvi_dec, the original repulsion probe's
+independent control 'probe_ind' (K separate one-component GEMSS fits seeded 1000*seed+k, as in
+stresstest repulsion_probe.py), --task classification (binarized response, Bernoulli likelihood via
+LogisticBayesianFeatureSelector, as the probe), --var-slab, and an --arm label column.
 """
 import argparse, csv, os, sys, time
 import numpy as np
@@ -28,7 +33,32 @@ from src.evaluation import calculate_structural_metrics, calculate_metrics, _jac
 from gemss.feature_selection.inference import BayesianFeatureSelector
 from ensemble_parity import cluster_supports
 from tuned_compare import GEMSS_HP
-from src.wrappers.weightfix_gemss import ESTIMATORS, make_runner
+from src.wrappers.weightfix_gemss import ESTIMATORS, INITS, make_runner, apply_init
+from src.wrappers.logistic_gemss import LogisticBayesianFeatureSelector
+
+
+class ProbeIndependent:
+    """repulsion_probe.py's 'independent' scheme: K separate one-component fits, seed 1000*seed+k,
+    each GEMSS's own loop with 16 draws per step. Mixture-like accessors for the readout."""
+
+    def __init__(self, cls, K, seed, **kw):
+        self.sels = []
+        for k in range(K):
+            torch.manual_seed(1000 * seed + k)
+            self.sels.append(cls(n_components=1, **kw))
+        self.runners = [make_runner(sl, "current") for sl in self.sels]
+        self.batch_size = self.sels[0].batch_size
+
+    def run(self, n):
+        for r in self.runners:
+            r.run(n)
+
+    def state(self):
+        mu = torch.cat([sl.mixture.mu.detach() for sl in self.sels])
+        var = torch.cat([sl.mixture.get_variance().detach() for sl in self.sels])
+        with torch.no_grad():
+            elbo = float(np.mean([sl.elbo(sl.mixture.sample(256)[0]).item() for sl in self.sels]))
+        return mu, var, torch.full((len(self.sels),), 1.0 / len(self.sels)), elbo
 
 
 def mean_dissim(sets):
@@ -57,7 +87,11 @@ def main():
     ap.add_argument("--chunk", type=int, default=2000,
                     help="max steps per optimize() call (bounds the per-step history memory)")
     ap.add_argument("--dump-dir", dest="dump_dir", default=None)
-    ap.add_argument("--estimator", choices=ESTIMATORS, default="current")
+    ap.add_argument("--estimator", choices=ESTIMATORS + ("probe_ind",), default="current")
+    ap.add_argument("--init", choices=INITS, default="default")
+    ap.add_argument("--task", choices=["regression", "classification"], default="regression")
+    ap.add_argument("--var-slab", dest="var_slab", type=float, default=None)
+    ap.add_argument("--arm", default=None, help="label written to the 'arm' column (default: estimator)")
     ap.add_argument("--strat-draws", dest="strat_draws", type=int, default=None)
     ap.add_argument("--ngvi-beta", dest="ngvi_beta", type=float, default=0.02)
     ap.add_argument("--ngvi-beta-w", dest="ngvi_beta_w", type=float, default=None)
@@ -76,10 +110,15 @@ def main():
         hp.update(prior="ss", weight_slab=ws, weight_spike=1 - ws)
     keys = ("prior", "var_spike", "weight_slab", "weight_spike", "lr", "batch_size")
     sel_kwargs = {k: hp[k] for k in keys}
+    if args.var_slab is not None:
+        sel_kwargs["var_slab"] = args.var_slab
+    cls = LogisticBayesianFeatureSelector if args.task == "classification" else BayesianFeatureSelector
+    arm = args.arm or args.estimator
 
     fields = ["prior", "rank", "seed", "K", "step", "union_f1", "sol_f1", "dissim",
               "signal_share_topD", "elbo", "raw_dissim", "n_distinct", "perplexity",
-              "seconds", "supports", "estimator", "alpha_max", "union_f1_topw", "signal_share_w"]
+              "seconds", "supports", "estimator", "alpha_max", "union_f1_topw", "signal_share_w",
+              "arm", "init", "overlap", "task", "p", "D"]
     est_opts = dict(strat_draws=args.strat_draws, ngvi_beta=args.ngvi_beta, ngvi_beta_w=args.ngvi_beta_w,
                     fp_every=args.fp_every, fp_draws=args.fp_draws, fp_eta=args.fp_eta)
     f = open(args.out, "w", newline="")
@@ -89,13 +128,19 @@ def main():
         X, y, truth, planted = generate_overlapping_dataset(
             n_samples=args.n, n_features=args.p, n_solutions=3, sparsity=args.D,
             latent_rank=args.rank, overlap=args.overlap, noise_std=args.noise,
-            nan_ratio=0.0, binarize=False, nonlinear=False, noise_dist="gauss", seed=seed)
+            nan_ratio=0.0, binarize=(args.task == "classification"), nonlinear=False, noise_dist="gauss",
+            seed=seed)
         truth = set(truth)
         for K in args.K:
-            torch.manual_seed(seed)                      # = tuned_compare --torchseed
-            sel = BayesianFeatureSelector(n_features=args.p, n_components=K, X=X, y=y,
-                                          sss_sparsity=args.D, n_iter=args.chunk, **sel_kwargs)
-            runner = make_runner(sel, args.estimator, **est_opts)
+            if args.estimator == "probe_ind":
+                sel = runner = ProbeIndependent(cls, K, seed, n_features=args.p, X=X, y=y, sss_sparsity=args.D,
+                                                n_iter=args.chunk, **sel_kwargs)
+            else:
+                torch.manual_seed(seed)                      # = tuned_compare --torchseed
+                sel = cls(n_features=args.p, n_components=K, X=X, y=y,
+                          sss_sparsity=args.D, n_iter=args.chunk, **sel_kwargs)
+                apply_init(sel.mixture, args.init, X, y, args.D, seed)
+                runner = make_runner(sel, args.estimator, **est_opts)
             done, t0, mus = 0, time.perf_counter(), {}
             for cp in cps:
                 while done < cp:
@@ -103,12 +148,17 @@ def main():
                     runner.run(n)                        # 'current': sel.optimize, as before
                     done += n
                 state = torch.get_rng_state()
-                with torch.no_grad():
-                    z_eval, _ = sel.mixture.sample(max(256, sel.batch_size))
-                    elbo = float(sel.elbo(z_eval).item())
+                if args.estimator == "probe_ind":
+                    mu_t, var_t, alpha_t, elbo = sel.state()
+                else:
+                    with torch.no_grad():
+                        z_eval, _ = sel.mixture.sample(max(256, sel.batch_size))
+                        elbo = float(sel.elbo(z_eval).item())
+                    mu_t, var_t, alpha_t = sel.mixture.mu.detach(), sel.mixture.get_variance().detach(), \
+                        sel.mixture.get_alpha().detach()
                 torch.set_rng_state(state)
-                mu = sel.mixture.mu.detach().cpu().numpy()
-                alpha = sel.mixture.get_alpha().detach().cpu().numpy()
+                mu = mu_t.cpu().numpy()
+                alpha = alpha_t.cpu().numpy()
                 raw = [tuple(sorted(np.argsort(np.abs(mu[k]))[::-1][:args.D].tolist())) for k in range(K)]
                 sols = cluster_supports(raw, args.p, args.m, args.D)
                 sm = calculate_structural_metrics(sols, planted)
@@ -127,11 +177,12 @@ def main():
                     seconds=time.perf_counter() - t0,
                     supports=";".join(",".join(map(str, sorted(s["support"]))) for s in sols.values()),
                     estimator=args.estimator, alpha_max=float(alpha.max()), union_f1_topw=uf_w,
-                    signal_share_w=float(alpha @ share)))
+                    signal_share_w=float(alpha @ share), arm=arm, init=args.init, overlap=args.overlap,
+                    task=args.task, p=args.p, D=args.D))
                 f.flush()
                 mus[f"mu_{cp}"], mus[f"alpha_{cp}"] = mu, alpha
-                mus[f"var_{cp}"] = sel.mixture.get_variance().detach().cpu().numpy()
-                print(f"  {args.prior}/{args.estimator} sd={seed} K={K} step={cp} u={uf:.3f} u_w={uf_w:.3f} "
+                mus[f"var_{cp}"] = var_t.cpu().numpy()
+                print(f"  {args.prior}/{arm}/{args.init} ov={args.overlap} sd={seed} K={K} step={cp} u={uf:.3f} u_w={uf_w:.3f} "
                       f"elbo={elbo:.1f} amax={alpha.max():.2f}", flush=True)
             if args.dump_dir:
                 np.savez_compressed(os.path.join(args.dump_dir, f"{args.prior}_r{args.rank}_sd{seed}_K{K}.npz"), **mus)
