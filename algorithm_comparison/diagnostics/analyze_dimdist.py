@@ -92,3 +92,33 @@ print(e.groupby(["cell", "wmode", "Pk"], observed=True).ex_maxpat.median().unsta
 print("\n== G7 PIP MAE gap on the block (diag, w fixed)")
 g = gaps(sel("diag", "fixed"), col="pip_mae_post")
 print(g.groupby(["cell", "Pk"], observed=True).gap.apply(short).unstack("Pk").to_string())
+
+# operational geometry: a cell is 'connected' when oracle-started independent fits collapse (< 3 distinct of K = 6)
+ob = d[BLOCK & (d.init == "oracle") & (d.arm == "F3Ens")].groupby("cell").n_groups_block.mean()
+CONN = set(ob[ob < 3].index)
+print("\n== G8 operational geometry (block size): basin-collapsing ('connected') cells:", sorted(CONN))
+
+s = sel("diag", "fixed")
+for init in ("default", "oracle"):
+    print(f"\n== G9 absolute block TV per arm (diag, w fixed, {init} start)")
+    print(s[s.init == init].pivot_table(index=["cell", "arm"], columns="Pk", values="tv_post", observed=True)
+          .round(3).to_string())
+    v = s[s.init == init].pivot_table(index=["cell", "Pk", "rep"], columns="arm", values="elbo", observed=True)
+    print(f"   ELBO gap J - Ens (nats, paired mean; {init} start)")
+    print((v.F3J - v.F3Ens).groupby(["cell", "Pk"], observed=True).mean().unstack("Pk").round(2).to_string())
+
+print("\n== G10 where the joint fit's separation goes, connected cells (diag, w fixed): between-component"
+      " Mahalanobis^2 on block vs nuisance coordinates, block-distinct components (mean over cells x reps)")
+c = s[s.cell.isin(CONN)]
+print(c.groupby(["init", "arm", "Pk"], observed=True)[["d2_block", "d2_nuis", "n_groups", "n_groups_block",
+                                                        "nuis_pip", "ex_nuis_pip", "nuis_pip_mae"]]
+      .mean().round(3).to_string())
+print("   exact nuisance inclusion entropy at the largest P (nats), per cell")
+print(s[s.P == s.P.max()].drop_duplicates(["cell", "rep"]).groupby("cell")[["ex_nuis_ent", "ex_nuis_pip"]]
+      .median().round(3).to_string())
+
+print("\n== G11 large-P positive gaps (joint worse): block TV per arm, default start (median / mean / fraction TV > 0.9)")
+q = d[~BLOCK & (d.init == "default") & (((d.nuis == "diag") & (d.wmode == "scaled") & (d.P == d.P.max()))
+                                        | ((d.nuis == "coll") & (d.P == d[d.nuis == "coll"].P.max())))]
+print(q.groupby(["cell", "nuis", "arm"]).tv_post.agg(med="median", mean="mean", fail=lambda x: (x > 0.9).mean())
+      .round(3).unstack("arm").to_string())
