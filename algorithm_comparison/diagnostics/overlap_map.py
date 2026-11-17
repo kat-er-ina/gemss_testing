@@ -173,7 +173,7 @@ def dimension_stats(alpha, mu, var, ex, g):
                d2_nuis=float(dd[..., g:].sum(-1)[iu].mean()) if (K > 1 and mu.shape[1] > g) else 0.0)
     _, out["n_groups_block"] = merged_weights(np.zeros(K), mu[:, :g], var[:, :g])
     out["nuis_pip"] = out["nuis_pip_mae"] = np.nan
-    if mu.shape[1] > g:
+    if mu.shape[1] > g and not ex.get("nuis_gauss"):
         a = slab_resp(mu[:, g:], var[:, g:], ex["w"], ex["s1"], ex["s2"])
         out["nuis_pip"] = float((alpha @ a).mean())
         if ex.get("nuis_pip") is not None:
@@ -319,6 +319,34 @@ def selftest():
         print(f"embed_diag ({design}): Gram of block / X^T y preserved: {np.abs(Xd[:, :pb].T @ Xd[:, :pb] - Xb.T @ Xb).max():.1e} / "
               f"{np.abs(Xd[:, :pb].T @ yd - Xb.T @ yb).max():.1e}; max |full marginal - block-only| = {np.abs(marg - blk['pi']).max():.1e}; "
               f"nuisance PIP full enumeration vs closed form: {np.abs(full['pip'][pb:] - npip).max():.1e}")
+    # per-coordinate prior weights (plan sec. 24, --nuis-prior gauss): a weight vector equal to the scalar must
+    # reproduce the scalar path exactly (log density and the ngvi closed-form terms); slab weight 0 on a
+    # coordinate must give GEMSS's pure-spike Gaussian there
+    Xd, yd = embed_diag(*make_data("M", 0.9, 25, 0, 10)[:2], 14, [7, 8, 9])
+    sa, sb = selector(Xd, yd, 3, 2.0, 0.1, 0.2), selector(Xd, yd, 3, 2.0, 0.1, 0.2)
+    wv = torch.full((14,), 0.2, dtype=torch.float32); sb.prior.w_slab, sb.prior.w_spike = wv, 1.0 - wv
+    z = torch.randn(7, 14, dtype=sa.X.dtype)
+    ta, tb = RegressionTarget(sa).terms(z), RegressionTarget(sb).terms(z)
+    e_same = max(float((u - v).abs().max()) for u, v in zip(ta, tb))
+    e_lp = float((sa.prior.log_prob(z) - sb.prior.log_prob(z)).abs().max())
+    wv = torch.tensor([0.2] * 10 + [0.0] * 4, dtype=torch.float32); sb.prior.w_slab, sb.prior.w_spike = wv, 1.0 - wv
+    s2v = float(sb.prior.var_spike)
+    ref = -0.5 * (z[:, 10:] / s2v) ** 2 - np.log(s2v)                         # GEMSS normalisation (no 2 pi)
+    blk = torch.log(0.2 * torch.exp(-0.5 * (z[:, :10] / 2.0) ** 2) / 2.0 + 0.8 * torch.exp(-0.5 * (z[:, :10] / s2v) ** 2) / s2v)
+    want = blk.sum(-1) + ref.sum(-1)
+    Tb = RegressionTarget(sb)
+    lp_t, g_t, H_t = Tb._prior_terms(z)
+    e_g = float((Tb.logp(z) - sb.log_likelihood(z) - want).abs().max() / want.abs().max())   # stable form, any z
+    zs = z.clone(); zs[:, 10:] *= 0.1                     # GEMSS's raw form agrees where it does not underflow
+    want_s = blk.sum(-1) + (-0.5 * (zs[:, 10:] / s2v) ** 2 - np.log(s2v)).sum(-1)
+    e_raw = float((sb.prior.log_prob(zs) - want_s).abs().max())
+    e_t = float((lp_t - want).abs().max() / want.abs().max())
+    print(f"   raw GEMSS log_prob at realistic nuisance values (|z| ~ 0.1): {e_raw:.1e}")
+    assert e_raw < 1e-4
+    e_grad = float((g_t[:, 10:] + z[:, 10:] / s2v ** 2).abs().max()); e_H = float((H_t[:, 10:] + 1 / s2v ** 2).abs().max())
+    print(f"per-coordinate weights: vector == scalar (terms / log_prob) {e_same:.1e} / {e_lp:.1e}; nuisance slab weight 0 "
+          f"-> Gaussian log density (target, rel.) {e_g:.1e}, ngvi terms rel. {e_t:.1e}, gradient {e_grad:.1e}, curvature {e_H:.1e}")
+    assert e_same == 0.0 and e_lp == 0.0 and e_g < 1e-6 and e_t < 1e-6 and e_grad < 1e-3 and e_H < 1e-3
 
 
 def main():
@@ -342,6 +370,10 @@ def main():
                          "coll: random columns in the complement of the block (collinear once P > n)")
     ap.add_argument("--wmodes", nargs="+", default=["fixed"], choices=["fixed", "scaled"],
                     help="prior slab weight: fixed = --w; scaled = --w * p / P (as D/p in RQ1, 5/p in Li et al.)")
+    ap.add_argument("--nuis-prior", dest="nuis_prior", default="ss", choices=["ss", "gauss"],
+                    help="ss: nuisance coordinates get the model's spike-and-slab prior (as the block); gauss "
+                         "(plan sec. 24 control): slab weight 0 on nuisance coordinates, i.e. the spike alone, a "
+                         "Gaussian prior, so their exact posterior is Gaussian; the block's prior is unchanged")
     ap.add_argument("--yscales", type=float, nargs="+", default=[1.0], help="design R: y divided by this")
     ap.add_argument("--r-overlap", dest="r_overlap", type=int, default=0, help="design R: shared core size")
     ap.add_argument("--b", type=float, default=0.5)
@@ -389,6 +421,12 @@ def main():
                         q = ex["nuis_pip"]                 # exact nuisance inclusion entropy (nats) and mean PIP
                         ex_info.update(ex_nuis_ent=float(-(q * np.log(q + 1e-300) + (1 - q) * np.log1p(-q + 1e-300)).sum())
                                        if q is not None else np.nan, ex_nuis_pip=float(q.mean()) if q is not None else np.nan)
+                    if a.nuis_prior == "gauss" and Pe > g:
+                        if not ex.get("nuis_gauss"):            # nuisance posterior is Gaussian: no inclusion
+                            ex.update(nuis_gauss=True, nuis_pip=None)
+                            ex_info.update(ex_nuis_ent=0.0, ex_nuis_pip=0.0)
+                        wv = torch.tensor([wt] * g + [0.0] * (Pe - g), dtype=torch.float32)
+                        sel.prior.w_slab, sel.prior.w_spike = wv, 1.0 - wv
                     with torch.no_grad():
                         set_start(sel.mixture, init, ex, seed)
                     r = make_runner(sel, est, anneal=anneal, **opts)
@@ -408,6 +446,7 @@ def main():
                     leak = float((1 - np.exp(own - np.logaddexp.reduce(lpu, axis=1))).mean())
                     row = dict(design=a.design, rho=a.rho, n=n, rep=rep, arm=arm, K=K, anneal=ann, init=init,
                                yscale=ys, r_overlap=a.r_overlap, P=Pe, g=g, nuis=a.nuis, wmode=wmode, w=wt,
+                               nuis_prior=a.nuis_prior,
                                slab=a.slab, n_rows=X.shape[0],
                                elbo=elbo, seconds=secs, leak=leak, n_groups=ngroups, alpha_max_fit=float(al_fit.max()),
                                **ex_info, **dimension_stats(al_post, mu, var, ex, g))

@@ -125,14 +125,22 @@ class RegressionTarget(Target):
         self.omega = 1.0                              # likelihood tempering (plan sec. 19, annealing)
 
     def logp(self, z):
+        P = self.sel.prior
+        if isinstance(P, SpikeAndSlabPrior) and torch.is_tensor(P.w_slab):
+            # per-coordinate weights (plan sec. 24): GEMSS's log(w1 N1 + w2 N2) underflows to log 0 for a pure-spike
+            # coordinate at |z| > ~1.3 in float32; the same density in logaddexp form (scalar path unchanged)
+            return self._prior_terms(z)[0] + self.omega * self.sel.log_likelihood(z)
         return self.sel.prior.log_prob(z) + self.omega * self.sel.log_likelihood(z)
 
     def _prior_terms(self, z):
         P = self.prior
         if isinstance(P, SpikeAndSlabPrior):          # p_j = w1 N(z; 0, s1) + w2 N(z; 0, s2), s = s.d.
             s1, s2, w1, w2 = P.var_slab, P.var_spike, P.w_slab, P.w_spike
-            l1 = math.log(w1) - 0.5 * (z / s1) ** 2 - math.log(s1)
-            l2 = math.log(w2) - 0.5 * (z / s2) ** 2 - math.log(s2)
+            # weights may be per-coordinate tensors (plan sec. 24: Gaussian-nuisance control, slab weight 0 on
+            # nuisance coordinates -> log 0 = -inf -> pure spike); the scalar path is unchanged (bit-identical)
+            lw = lambda w: torch.log(w.to(z)) if torch.is_tensor(w) else math.log(w)
+            l1 = lw(w1) - 0.5 * (z / s1) ** 2 - math.log(s1)
+            l2 = lw(w2) - 0.5 * (z / s2) ** 2 - math.log(s2)
             lp = torch.logaddexp(l1, l2).sum(-1)
             r = torch.sigmoid(l1 - l2)
             a1, a2 = 1.0 / s1 ** 2, 1.0 / s2 ** 2
