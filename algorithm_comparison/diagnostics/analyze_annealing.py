@@ -173,8 +173,9 @@ if len(E):
 # ====================================================================== mechanism (local probe)
 if len(sys.argv) > 3 and os.path.exists(sys.argv[3]):
     m = pd.read_csv(sys.argv[3])
-    print("\n\n== Mechanism: coupling share of the (tempered) gradient over time, mean over seeds, K, overlap")
+    # median, not mean: gshare divides by the ELBO gradient norm, which can be ~0 early (one value of 2.6e5 seen)
+    print("\n\n== Mechanism: coupling share of the (tempered) gradient over time, MEDIAN over seeds, K, overlap")
     for init in ("default", "overlap"):
-        t = m[m.init == init].groupby(["opt", "prior", "anneal", "step"])[["gshare", "leak_unif"]].mean().round(3)
+        t = m[m.init == init].groupby(["opt", "prior", "anneal", "step"])[["gshare", "leak_unif"]].median().round(3)
         print(f"\n-- start {init}: gshare"); print(t.gshare.unstack(["opt", "prior", "anneal"]).to_string())
         print(f"-- start {init}: leak (uniform weights)"); print(t.leak_unif.unstack(["opt", "prior", "anneal"]).to_string())

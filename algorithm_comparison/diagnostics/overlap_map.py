@@ -77,7 +77,32 @@ def exact_posterior(sel):
     pi = np.exp(lp - lp.max()); pi /= pi.sum()
     mean = pi @ m
     second = np.einsum("g,gij->ij", pi, Sg + np.einsum("gi,gj->gij", m, m))
-    return dict(G=G, pi=pi, pip=pi @ G, mean=mean, cov=second - np.outer(mean, mean), s1=s1, s2=s2, w=w1)
+    return dict(G=G, pi=pi, pip=pi @ G, mean=mean, cov=second - np.outer(mean, mean), s1=s1, s2=s2, w=w1,
+                m=m, sd=np.sqrt(np.einsum("gii->gi", Sg)))
+
+
+def set_start(mix, mode, ex, seed):
+    """Diverse starts for the ensemble-fairness check (same start for every arm of a dataset/K).
+    default  GEMSS: mu ~ N(0, 1), var = softplus(0)   (unchanged)
+    oracle   component k at the conditional posterior mean / s.d. of the k-th most probable EXACT pattern
+             (an upper bound on how diverse an ensemble's starts can be)
+    patdiv   K distinct random supports of size 1..4 (uniform over features, no use of the posterior mass),
+             each at its conditional posterior mean / s.d."""
+    if mode == "default":
+        return
+    K, p = mix.mu.shape
+    if mode == "oracle":
+        idx = np.argsort(-ex["pi"])[:K]
+    elif mode == "patdiv":
+        rng = np.random.default_rng(20_000 + seed); code = 2 ** np.arange(p)[::-1]; seen = set()
+        while len(seen) < K:
+            g = np.zeros(p, int); g[rng.choice(p, size=rng.integers(1, 5), replace=False)] = 1
+            seen.add(int(g @ code))
+        idx = np.array(sorted(seen))          # row index in the itertools.product enumeration
+    else:
+        raise ValueError(mode)
+    mix.mu.copy_(torch.tensor(ex["m"][idx], dtype=mix.mu.dtype))
+    mix._log_var.copy_(torch.log(torch.expm1(torch.tensor(ex["sd"][idx] ** 2, dtype=mix.mu.dtype))))
 
 
 def slab_resp(mu, var, w, s1, s2):
@@ -182,6 +207,7 @@ def main():
     ap.add_argument("--K", type=int, nargs="+", default=[3, 6, 12])
     ap.add_argument("--arms", nargs="+", default=list(ARMS))
     ap.add_argument("--anneals", nargs="+", default=["none"])
+    ap.add_argument("--inits", nargs="+", default=["default"], choices=["default", "oracle", "patdiv"])
     ap.add_argument("--steps", type=int, default=6000)
     ap.add_argument("--p", type=int, default=10)
     ap.add_argument("--b", type=float, default=0.5)
@@ -198,7 +224,7 @@ def main():
         anneal = None if ann == "none" else (float(ann.split("/")[0]), int(ann.split("/")[1]))
         X, y, cols = make_data(a.design, a.rho, n, rep, a.p, a.b)
         ex = None
-        for arm, K in itertools.product(a.arms, a.K):
+        for init, arm, K in itertools.product(a.inits, a.arms, a.K):
             est, opts = ARMS[arm]
             seed = 1000 * rep + K
             torch.manual_seed(seed)
@@ -209,6 +235,8 @@ def main():
                 ex_info = dict(ex_maxpat=float(top[0]), ex_n90=int(np.searchsorted(np.cumsum(top), 0.9) + 1),
                                ex_pip_group=";".join(f"{ex['pip'][c]:.3f}" for c in cols),
                                ex_corr=float(ex["cov"][0, 1] / np.sqrt(ex["cov"][0, 0] * ex["cov"][1, 1])))
+            with torch.no_grad():
+                set_start(sel.mixture, init, ex, seed)
             r = make_runner(sel, est, anneal=anneal, **opts)
             t0 = time.perf_counter(); r.run(a.steps); secs = time.perf_counter() - t0
             mix = sel.mixture
@@ -224,7 +252,7 @@ def main():
                               torch.tensor(mu), torch.tensor(var)).numpy()
             own = lpu[np.arange(K * 64), np.repeat(np.arange(K), 64)]
             leak = float((1 - np.exp(own - np.logaddexp.reduce(lpu, axis=1))).mean())
-            row = dict(design=a.design, rho=a.rho, n=n, rep=rep, arm=arm, K=K, anneal=ann, elbo=elbo, seconds=secs,
+            row = dict(design=a.design, rho=a.rho, n=n, rep=rep, arm=arm, K=K, anneal=ann, init=init, elbo=elbo, seconds=secs,
                        leak=leak, n_groups=ngroups, alpha_max_fit=float(al_fit.max()), **ex_info)
             for tag, al in (("fit", al_fit), ("unif", np.full(K, 1.0 / K)), ("post", al_post), ("merged", al_merged)):
                 row.update({f"{k}_{tag}": v for k, v in metrics(al, mu, var, ex, cols).items()})
