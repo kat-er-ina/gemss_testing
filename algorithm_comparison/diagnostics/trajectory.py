@@ -121,7 +121,7 @@ def main():
     fields = ["prior", "rank", "seed", "K", "step", "union_f1", "sol_f1", "dissim",
               "signal_share_topD", "elbo", "raw_dissim", "n_distinct", "perplexity",
               "seconds", "supports", "estimator", "alpha_max", "union_f1_topw", "signal_share_w",
-              "arm", "init", "overlap", "task", "p", "D", "anneal"]
+              "arm", "init", "overlap", "task", "p", "D", "anneal", "n", "noise"]
     est_opts = dict(strat_draws=args.strat_draws, ngvi_beta=args.ngvi_beta, ngvi_beta_w=args.ngvi_beta_w,
                     fp_every=args.fp_every, fp_draws=args.fp_draws, fp_eta=args.fp_eta,
                     anneal=(args.anneal_omega0, args.anneal_steps) if args.anneal_omega0 else None)
@@ -183,7 +183,7 @@ def main():
                     supports=";".join(",".join(map(str, sorted(s["support"]))) for s in sols.values()),
                     estimator=args.estimator, alpha_max=float(alpha.max()), union_f1_topw=uf_w,
                     signal_share_w=float(alpha @ share), arm=arm, init=args.init, overlap=args.overlap,
-                    task=args.task, p=args.p, D=args.D, anneal=anneal_tag))
+                    task=args.task, p=args.p, D=args.D, anneal=anneal_tag, n=args.n, noise=args.noise))
                 f.flush()
                 mus[f"mu_{cp}"], mus[f"alpha_{cp}"] = mu, alpha
                 mus[f"var_{cp}"] = var_t.cpu().numpy()

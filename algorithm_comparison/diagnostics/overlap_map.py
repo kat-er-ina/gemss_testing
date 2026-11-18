@@ -393,6 +393,20 @@ def selftest():
           f"{e_tied:.1e} (block spread {d_blk:.2f}); shared-factor direction vs autograd (rel.) {e_dir:.1e}; "
           f"screen m=20 keeps {len(keep)} incl. {int((keep < 10).sum())} block")
     assert e_empty == 0.0 and e_tied == 0.0 and d_blk > 0.05 and e_dir < 1e-4 and len(keep) == 20
+    # spike-width path (plan sec. 28): schedule end points, prior restored to the target spike, and the path is
+    # the only difference (no path == plain run, bit for bit)
+    outs = []
+    for sp in (None, (None, 0), (0.1, 200)):
+        torch.manual_seed(3); sl = selector(Xd, yd, 3, 2.0, 0.01, 0.2)
+        r = make_runner(sl, "ngvi", spike_path=sp)
+        s_first = r.spike_at(0) if r.spike_path else None
+        r.run(300); outs.append((r, s_first, float(sl.prior.var_spike)))
+    e_none = float((outs[0][0].mu - outs[1][0].mu).abs().max())
+    r2, s_first, s_after = outs[2]
+    print(f"spike path: no path == plain {e_none:.1e}; s(0) = {s_first:.3f}, s(T/2) = {r2.spike_at(100):.4f}, "
+          f"after run {s_after:.3f}; path changes the fit: {float((outs[0][0].mu - r2.mu).abs().max()):.2f}")
+    assert e_none == 0.0 and abs(s_first - 0.1) < 1e-12 and abs(r2.spike_at(100) - 0.1 ** 0.5 * 0.01 ** 0.5) < 1e-12 \
+        and s_after == 0.01
 
 
 def main():
@@ -406,6 +420,8 @@ def main():
     ap.add_argument("--K", type=int, nargs="+", default=[3, 6, 12])
     ap.add_argument("--arms", nargs="+", default=list(ARMS))
     ap.add_argument("--anneals", nargs="+", default=["none"])
+    ap.add_argument("--spike-paths", dest="spike_paths", nargs="+", default=["none"],
+                    help="plan sec. 28: 'none' or s0/T (spike s.d. from s0 to --spike, geometric over T steps)")
     ap.add_argument("--inits", nargs="+", default=["default"], choices=["default", "oracle", "patdiv"])
     ap.add_argument("--steps", type=int, default=6000)
     ap.add_argument("--p", type=int, default=10, help="block size (features of the exact problem)")
@@ -432,8 +448,10 @@ def main():
         return selftest()
     torch.set_num_threads(int(os.environ.get("OMP_NUM_THREADS", "1")))
     f = open(a.out, "w", newline=""); w = None
-    for n, rep, ann, ys in itertools.product(a.n, range(a.rep0, a.rep0 + a.reps), a.anneals, a.yscales):
+    for n, rep, ann, ys, sp in itertools.product(a.n, range(a.rep0, a.rep0 + a.reps), a.anneals, a.yscales,
+                                                 a.spike_paths):
         anneal = None if ann == "none" else (float(ann.split("/")[0]), int(ann.split("/")[1]))
+        spath = None if sp == "none" else (float(sp.split("/")[0]), int(sp.split("/")[1]))
         Xb, y, cols = make_data(a.design, a.rho, n, rep, a.p, a.b, a.r_overlap, ys)
         g = Xb.shape[1]
         for P in a.P:
@@ -484,7 +502,7 @@ def main():
                         scr = dict(scr_m=len(keep), scr_block=int((keep < g).sum()), scr_cols=int(np.isin(cols, keep).sum()),
                                    scr_rel=float(np.isin(rel, keep).mean()),
                                    scr_pip10=float(np.isin(big, keep).mean()) if len(big) else np.nan)
-                    r = make_runner(sel, est, anneal=anneal, tie=tie, **opts)
+                    r = make_runner(sel, est, anneal=anneal, tie=tie, spike_path=spath, **opts)
                     t0 = time.perf_counter(); r.run(a.steps); secs = time.perf_counter() - t0
                     mix = sel.mixture
                     mu_t, var_t = mix.mu.detach().clone(), mix.get_variance().detach().clone()
@@ -500,6 +518,7 @@ def main():
                     own = lpu[np.arange(K * 64), np.repeat(np.arange(K), 64)]
                     leak = float((1 - np.exp(own - np.logaddexp.reduce(lpu, axis=1))).mean())
                     row = dict(design=a.design, rho=a.rho, n=n, rep=rep, arm=arm, K=K, anneal=ann, init=init,
+                               spike=a.spike, spike_path=sp,
                                yscale=ys, r_overlap=a.r_overlap, P=Pe, g=g, nuis=a.nuis, wmode=wmode, w=wt,
                                nuis_prior=a.nuis_prior,
                                slab=a.slab, n_rows=X.shape[0],

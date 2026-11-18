@@ -206,7 +206,8 @@ class WeightFixRunner:
                  sel: Optional[BayesianFeatureSelector] = None, strat_draws: Optional[int] = None,
                  ngvi_beta: float = 0.02, ngvi_beta_w: Optional[float] = None,
                  fp_every: int = 100, fp_draws: int = 64, fp_eta: float = 1.0, logit_clip: float = 80.0,
-                 anneal: Optional[tuple] = None, tie: Optional[torch.Tensor] = None):
+                 anneal: Optional[tuple] = None, tie: Optional[torch.Tensor] = None,
+                 spike_path: Optional[tuple] = None):
         if estimator not in ESTIMATORS:
             raise ValueError(f"unknown estimator {estimator}")
         self.mix, self.target, self.est, self.sel = mix, target, estimator, sel
@@ -233,6 +234,15 @@ class WeightFixRunner:
                 self.mu = mix.mu.detach().clone()
                 self.prec = 1.0 / mix.get_variance().detach().clone()
                 self.logit = mix._log_alpha.detach().clone()
+        # spike-width path (plan sec. 28): spike s.d. s(t) = s_end * (s0 / s_end) ** (1 - t / T) for t < T, then
+        # s_end (the prior's value at construction). Geometric, like the likelihood annealing.
+        self.spike_path = None
+        if spike_path and spike_path[0] is not None:
+            if sel is None or not isinstance(sel.prior, SpikeAndSlabPrior):
+                raise ValueError("spike_path needs GEMSS's standard spike-and-slab prior")
+            self.spike_path = (float(spike_path[0]), int(spike_path[1]), float(sel.prior.var_spike))
+            if estimator in ("current", "frozen"):
+                raise ValueError("spike_path needs the generic loop")
         # localised coupling (plan sec. 27): coordinates with tie[j] = True share one mean and precision across
         # components (the mixture's components differ only on the others). Started at component 0's values.
         self.tie = None
@@ -380,6 +390,10 @@ class WeightFixRunner:
         la = la - torch.logsumexp(la, 0)
         self.mix._log_alpha.copy_(la[:-1] - la[-1])
 
+    def spike_at(self, t: int) -> float:
+        s0, T, s1 = self.spike_path
+        return s1 if t >= T else float(s1 * (s0 / s1) ** (1.0 - t / T))
+
     def omega_at(self, t: int) -> float:
         if not self.anneal:
             return 1.0
@@ -396,6 +410,8 @@ class WeightFixRunner:
         for _ in range(n_steps):
             if self.anneal:
                 self.target.omega = self.omega_at(self.t)
+            if self.spike_path:
+                self.sel.prior.var_spike = self.spike_at(self.t)
             if self.est in ("current", "frozen"):
                 hist.append(self._step_generic_current())
             elif self.est == "strat":
@@ -417,6 +433,8 @@ class WeightFixRunner:
             self.t += 1
         if self.anneal:
             self.target.omega = self.omega_at(self.t)
+        if self.spike_path:
+            self.sel.prior.var_spike = self.spike_at(self.t)
         self.sync()
         return hist
 
