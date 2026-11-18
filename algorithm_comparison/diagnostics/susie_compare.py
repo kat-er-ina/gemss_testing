@@ -218,9 +218,30 @@ def selftest():
     print(f"selftest ok: top-K = brute force; sampling max freq error {err:.4f}")
 
 
+def rcheck(rscript):
+    """Needs susieR: 3 effects, each with 2 near-duplicate proxies (corr ~0.99), n 200, p 300. The PIP recomputed
+    from alpha must equal susieR's PIP, and every true effect must sit in a CS together with its proxies."""
+    rng = np.random.default_rng(3)
+    n, p = 200, 300
+    X = rng.standard_normal((n, p))
+    for j in (0, 10, 20):
+        for k in (1, 2):
+            X[:, j + k] = X[:, j] + 0.1 * rng.standard_normal(n)
+    y = X[:, 0] - 1.5 * X[:, 10] + 2.0 * X[:, 20] + rng.standard_normal(n)
+    res = run_susie([(X, y)], 10, rscript)[0]
+    pip_alpha = 1 - np.prod(1 - res["alpha"], axis=0)
+    e_pip = float(np.abs(pip_alpha - res["pip"]).max())
+    groups = [{j, j + 1, j + 2} for j in (0, 10, 20)]
+    hit = [any(g & set(mem) and set(mem) <= g for _, _, mem in res["cs"]) for g in groups]
+    print(f"rcheck: susieR {res['info']['version']}, n_cs {len(res['cs'])}, CS {[m for _, _, m in res['cs']]}, "
+          f"max |pip(alpha) - pip| {e_pip:.2e}, groups recovered {hit}")
+    assert e_pip < 1e-8 and all(hit) and len(res["cs"]) == 3
+    print("rcheck ok")
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=["synth", "real", "selftest"])
+    ap.add_argument("mode", choices=["synth", "real", "selftest", "rcheck"])
     ap.add_argument("--n", type=int, default=100); ap.add_argument("--p", type=int, default=200)
     ap.add_argument("--overlap", type=int, default=4); ap.add_argument("--noise", type=float, default=0.05)
     ap.add_argument("--rank", type=int, default=2)
@@ -234,6 +255,8 @@ def main():
     a = ap.parse_args()
     if a.mode == "selftest":
         return selftest()
+    if a.mode == "rcheck":
+        return rcheck(a.rscript)
     a.m = a.m or (3 if a.mode == "synth" else 8)
     os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
     synth(a) if a.mode == "synth" else real(a)
