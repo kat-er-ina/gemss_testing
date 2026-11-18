@@ -124,6 +124,12 @@ class RegressionTarget(Target):
         self.colsq = (self.X ** 2).sum(0)
         self.omega = 1.0                              # likelihood tempering (plan sec. 19, annealing)
 
+    lik_curv = 1.0                                    # bound on the likelihood Hessian: lik_curv * X^T X
+
+    def curv_matvec(self, V):
+        """Rows of V (K, p) times the likelihood curvature bound omega * lik_curv * X^T X (plan sec. 37)."""
+        return self.omega * self.lik_curv * ((V @ self.X.T) @ self.X)
+
     def logp(self, z):
         P = self.sel.prior
         if isinstance(P, SpikeAndSlabPrior) and torch.is_tensor(P.w_slab):
@@ -184,6 +190,8 @@ class LogisticTarget(RegressionTarget):
     RegressionTarget.terms would silently use the Gaussian (L2) ones. logp is inherited (it calls the selector's own
     Bernoulli log_likelihood), so logp and terms describe the same model."""
 
+    lik_curv = 0.25                                   # sigma (1 - sigma) <= 1/4: the logistic smoothness bound
+
     def terms(self, z):
         lp, gp, Hp = self._prior_terms(z)
         y = self.y.reshape(1, -1)
@@ -223,7 +231,7 @@ class WeightFixRunner:
                  ngvi_beta: float = 0.02, ngvi_beta_w: Optional[float] = None,
                  fp_every: int = 100, fp_draws: int = 64, fp_eta: float = 1.0, logit_clip: float = 80.0,
                  anneal: Optional[tuple] = None, tie: Optional[torch.Tensor] = None,
-                 spike_path: Optional[tuple] = None):
+                 spike_path: Optional[tuple] = None, step_rule: str = "fixed", pow_iters0: int = 30):
         if estimator not in ESTIMATORS:
             raise ValueError(f"unknown estimator {estimator}")
         self.mix, self.target, self.est, self.sel = mix, target, estimator, sel
@@ -250,6 +258,18 @@ class WeightFixRunner:
                 self.mu = mix.mu.detach().clone()
                 self.prec = 1.0 / mix.get_variance().detach().clone()
                 self.logit = mix._log_alpha.detach().clone()
+        # step-size rule (plan sec. 37): 'fixed' = ngvi_beta for every component (unchanged); 'invL' = per
+        # component min(ngvi_beta, 1 / L_k), L_k = largest eigenvalue of S_k^-1/2 A_k S_k^-1/2 with S_k the
+        # component's precision and A_k = likelihood curvature bound + the prior's diagonal curvature; L_k by power
+        # iteration (pow_iters0 at the first step, then one warm-started iteration per step). The textbook stable
+        # step for a preconditioned gradient step; in the natural-gradient (mirror-descent) view, the KL trust region.
+        if step_rule not in ("fixed", "invL"):
+            raise ValueError(f"unknown step_rule {step_rule}")
+        if step_rule == "invL" and (estimator not in ("ngvi", "ngvi_dec", "ngvi_frozen") or tie is not None
+                                    or not hasattr(target, "curv_matvec")):
+            raise ValueError("step_rule invL: ngvi / ngvi_dec / ngvi_frozen on a regression or logistic target, no tie")
+        self.step_rule, self.pow_iters0, self.pow_v = step_rule, int(pow_iters0), None
+        self.step_hist: List[float] = []                # mean effective step per call (diagnostics)
         # spike-width path (plan sec. 28): spike s.d. s(t) = s_end * (s0 / s_end) ** (1 - t / T) for t < T, then
         # s_end (the prior's value at construction). Geometric, like the likelihood annealing.
         self.spike_path = None
@@ -342,8 +362,8 @@ class WeightFixRunner:
         self.opt.zero_grad(); (-obj).backward(); self.opt.step(); self._clip_logits()
         return float(hd.mean())
 
-    def _ngvi_update(self, Hc, gc, dlogit):
-        b = self.beta
+    def _ngvi_update(self, Hc, gc, dlogit, b=None):
+        b = self.beta if b is None else b
         prec = self.prec + b * Hc + b ** 2 * Hc ** 2 / (2 * self.prec)
         self.mu = self.mu - b * gc / prec
         self.prec = prec
@@ -375,8 +395,30 @@ class WeightFixRunner:
             wk = la.exp()[:, None]
             gc[:, self.tie] = (wk * gc[:, self.tie]).sum(0)
             Hc[:, self.tie] = (wk * Hc[:, self.tie]).sum(0)
-        self._ngvi_update(Hc, gc, h[:-1] - h[-1])
+        b = None
+        if self.step_rule == "invL":
+            # prior's diagonal curvature: -Hp minus the likelihood bound's diagonal, clamped at 0 (upper bound on L)
+            D = (-Hp.view(K, n, p).mean(1) - self.target.omega * self.target.lik_curv * self.target.colsq).clamp_min(0)
+            b = self._inv_L(D)
+        self._ngvi_update(Hc, gc, h[:-1] - h[-1], b)
         return float(-(la.exp() * h).sum())
+
+    def _inv_L(self, D):
+        """Per-component step min(beta, 1 / L_k) (plan sec. 37), L_k by warm-started power iteration."""
+        si = self.prec.rsqrt()
+        M = lambda V: si * (self.target.curv_matvec(si * V) + D * (si * V))
+        if self.pow_v is None:
+            V = torch.randn_like(self.prec); V = V / V.norm(dim=1, keepdim=True)
+            for _ in range(self.pow_iters0 - 1):
+                W = M(V); V = W / W.norm(dim=1, keepdim=True).clamp_min(1e-30)
+        else:
+            V = self.pow_v
+        W = M(V)
+        L = (V * W).sum(1)                                   # Rayleigh quotient of the unit vector V
+        self.pow_v = W / W.norm(dim=1, keepdim=True).clamp_min(1e-30)
+        b = torch.clamp(1.0 / L.clamp_min(1e-30), max=self.beta)
+        self.step_hist.append(float(b.mean()))
+        return b[:, None]
 
     @torch.no_grad()
     def _step_ngvi_mix(self):

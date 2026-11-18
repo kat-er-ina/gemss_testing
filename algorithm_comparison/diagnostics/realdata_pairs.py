@@ -38,6 +38,7 @@ def main():
     ap.add_argument("-m", type=int, default=8)
     ap.add_argument("--n-iter", dest="n_iter", type=int, default=None, help="override 6000 (smoke tests only)")
     ap.add_argument("--no-endmodel", dest="endmodel", action="store_false", help="skip the end-model F1 (smoke)")
+    ap.add_argument("--step-rule", dest="step_rule", choices=["fixed", "invL"], default="fixed", help="plan sec. 37")
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
     df_feat, y, fnames = data(a.dataset)
@@ -48,6 +49,7 @@ def main():
     if a.n_iter:
         hp["n_iter"] = a.n_iter
     est, opts = ARMS[a.arm]
+    opts = dict(opts, **({"step_rule": a.step_rule} if a.step_rule != "fixed" else {}))
     rows = []
     for seed in a.seeds:
         torch.manual_seed(seed)
@@ -64,7 +66,7 @@ def main():
             f1s = [v[0] for v in per.values() if v[0] >= 0]
         dmean, dlo, dhi = rq3.dissim_stats(cl)
         al = np.asarray(w.alpha_, float); al = al / al.sum()
-        rows.append(dict(dataset=a.dataset, arm=a.arm, seed=seed, n=n, p=p, K=a.K, D=a.D, m=a.m,
+        rows.append(dict(dataset=a.dataset, arm=a.arm, seed=seed, n=n, p=p, K=a.K, D=a.D, m=a.m, step_rule=a.step_rule,
                          nsol=len(cl), f1_min=min(f1s) if f1s else np.nan, f1_mean=np.mean(f1s) if f1s else np.nan,
                          f1_best=max(f1s) if f1s else np.nan, dissim=dmean, dissim_lo=dlo, dissim_hi=dhi,
                          n_distinct_raw=len(set(raw)), elbo=w.elbo_, alpha_max=float(al.max()),

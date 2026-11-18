@@ -430,6 +430,37 @@ def selftest():
                 float((H - Ha).abs().max() / Ha.abs().max()))
         print(f"Bernoulli target ({pr}): {type(Tl).__name__}; log density / gradient / Hessian diagonal vs autograd, max rel. {e:.1e}")
         assert isinstance(Tl, LogisticTarget) and e < 1e-5
+    # step-size rule (plan sec. 37): 'fixed' explicit == default bit for bit; power-iteration L vs a dense eigenvalue
+    # computation; the rule removes the p >> n divergence of the fixed step (RQ1 generator, p 1000, n 30, ss)
+    fx = []
+    for opt in ({}, dict(step_rule="fixed")):
+        torch.manual_seed(5); sl = selector(Xd, yd, 4, 2.0, 0.1, 0.2); r = make_runner(sl, "ngvi", **opt); r.run(200); fx.append(r.mu)
+    e_fixed = float((fx[0] - fx[1]).abs().max())
+    torch.manual_seed(6); sl = selector(Xd[:, :12], yd, 3, 2.0, 0.1, 0.2); r = make_runner(sl, "ngvi", step_rule="invL", pow_iters0=300)
+    r.prec = r.prec * torch.rand(3, 12) * 0.05 + 0.01        # small precisions so that 1/L < beta (L not clamped)
+    Dt = torch.rand(3, 12, dtype=r.prec.dtype) * 50           # any nonnegative diagonal
+    b_pow = r._inv_L(Dt).ravel().double()
+    Xs, S = sl.X.double(), r.prec.double()
+    Lk = [float(torch.linalg.eigvalsh(torch.diag(S[k].rsqrt()) @ (Xs.T @ Xs + torch.diag(Dt[k].double()))
+                                      @ torch.diag(S[k].rsqrt()))[-1]) for k in range(3)]
+    Lr = (1.0 / b_pow).tolist()
+    assert (b_pow < r.beta).all()
+    e_L = max(abs(a_ - b_) / b_ for a_, b_ in zip(Lr, Lk))
+    from src.hard_data_factory import generate_overlapping_dataset as _gen
+    Xh, yh, *_ = _gen(n_samples=30, n_features=1000, n_solutions=3, sparsity=10, latent_rank=2, overlap=2, noise_std=0.05,
+                     nan_ratio=0.0, binarize=False, nonlinear=False, noise_dist="gauss", seed=1)
+    mx = {}
+    for rule in ("fixed", "invL"):
+        torch.manual_seed(1)
+        sh = BayesianFeatureSelector(n_features=1000, n_components=6, X=Xh, y=yh, prior="ss", var_slab=2.0, var_spike=0.1,
+                                     weight_slab=0.01, weight_spike=0.99, lr=0.01, batch_size=16, n_iter=1)
+        r = make_runner(sh, "ngvi_dec", strat_draws=16, step_rule=rule); m_ = 0.0
+        for _ in range(10):
+            r.run(20); m_ = max(m_, float(r.mu.abs().max()))
+        mx[rule] = (m_, bool(torch.isfinite(r.mu).all()))
+    print(f"step rule: fixed == default {e_fixed:.1e}; power-iteration L vs dense eigenvalue (rel.) {e_L:.1e}; "
+          f"p 1000 n 30 ss, largest |mean| in 200 steps: fixed {mx['fixed'][0]:.1e}, invL {mx['invL'][0]:.1e} (finite {mx['invL'][1]})")
+    assert e_fixed == 0.0 and e_L < 1e-3 and mx["fixed"][0] > 1e4 and mx["invL"][0] < 50 and mx["invL"][1]
     assert e_none == 0.0 and abs(s_first - 0.1) < 1e-12 and abs(r2.spike_at(100) - 0.1 ** 0.5 * 0.01 ** 0.5) < 1e-12 \
         and s_after == 0.01
 

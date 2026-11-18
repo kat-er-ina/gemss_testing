@@ -101,6 +101,8 @@ def main():
     ap.add_argument("--fp-every", dest="fp_every", type=int, default=100)
     ap.add_argument("--fp-draws", dest="fp_draws", type=int, default=64)
     ap.add_argument("--fp-eta", dest="fp_eta", type=float, default=1.0)
+    ap.add_argument("--step-rule", dest="step_rule", choices=["fixed", "invL"], default="fixed",
+                    help="plan sec. 37: F3 step size fixed (ngvi_beta) or min(ngvi_beta, 1/L) per component")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
@@ -121,10 +123,12 @@ def main():
     fields = ["prior", "rank", "seed", "K", "step", "union_f1", "sol_f1", "dissim",
               "signal_share_topD", "elbo", "raw_dissim", "n_distinct", "perplexity",
               "seconds", "supports", "estimator", "alpha_max", "union_f1_topw", "signal_share_w",
-              "arm", "init", "overlap", "task", "p", "D", "anneal", "n", "noise"]
+              "arm", "init", "overlap", "task", "p", "D", "anneal", "n", "noise", "step_rule", "step_mean"]
     est_opts = dict(strat_draws=args.strat_draws, ngvi_beta=args.ngvi_beta, ngvi_beta_w=args.ngvi_beta_w,
                     fp_every=args.fp_every, fp_draws=args.fp_draws, fp_eta=args.fp_eta,
                     anneal=(args.anneal_omega0, args.anneal_steps) if args.anneal_omega0 else None)
+    if args.step_rule != "fixed":
+        est_opts["step_rule"] = args.step_rule
     anneal_tag = f"{args.anneal_omega0}/{args.anneal_steps}" if args.anneal_omega0 else "none"
     f = open(args.out, "w", newline="")
     w = csv.DictWriter(f, fieldnames=fields); w.writeheader(); f.flush()
@@ -183,7 +187,9 @@ def main():
                     supports=";".join(",".join(map(str, sorted(s["support"]))) for s in sols.values()),
                     estimator=args.estimator, alpha_max=float(alpha.max()), union_f1_topw=uf_w,
                     signal_share_w=float(alpha @ share), arm=arm, init=args.init, overlap=args.overlap,
-                    task=args.task, p=args.p, D=args.D, anneal=anneal_tag, n=args.n, noise=args.noise))
+                    task=args.task, p=args.p, D=args.D, anneal=anneal_tag, n=args.n, noise=args.noise,
+                    step_rule=args.step_rule,
+                    step_mean=float(np.mean(runner.step_hist)) if getattr(runner, "step_hist", None) else np.nan))
                 f.flush()
                 mus[f"mu_{cp}"], mus[f"alpha_{cp}"] = mu, alpha
                 mus[f"var_{cp}"] = var_t.cpu().numpy()
