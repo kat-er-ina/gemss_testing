@@ -229,7 +229,8 @@ def rcheck(rscript):
             X[:, j + k] = X[:, j] + 0.1 * rng.standard_normal(n)
     y = X[:, 0] - 1.5 * X[:, 10] + 2.0 * X[:, 20] + rng.standard_normal(n)
     res = run_susie([(X, y)], 10, rscript)[0]
-    pip_alpha = 1 - np.prod(1 - res["alpha"], axis=0)
+    V = np.array(res["info"]["V"].split(","), float)          # susie_get_pip drops effects with V <= prior_tol 1e-9
+    pip_alpha = 1 - np.prod(1 - res["alpha"][V > 1e-9], axis=0)
     e_pip = float(np.abs(pip_alpha - res["pip"]).max())
     groups = [{j, j + 1, j + 2} for j in (0, 10, 20)]
     hit = [any(g & set(mem) and set(mem) <= g for _, _, mem in res["cs"]) for g in groups]
