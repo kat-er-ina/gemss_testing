@@ -178,6 +178,22 @@ class RegressionTarget(Target):
         return lp - 0.5 * w * (res ** 2).sum(-1), gp - w * (res @ self.X), Hp - w * self.colsq[None]
 
 
+class LogisticTarget(RegressionTarget):
+    """GEMSS's prior plus the Bernoulli likelihood of LogisticBayesianFeatureSelector (logits = X z, no intercept).
+    Plan sec. 30: the ngvi estimators need the likelihood's gradient and Hessian diagonal in closed form;
+    RegressionTarget.terms would silently use the Gaussian (L2) ones. logp is inherited (it calls the selector's own
+    Bernoulli log_likelihood), so logp and terms describe the same model."""
+
+    def terms(self, z):
+        lp, gp, Hp = self._prior_terms(z)
+        y = self.y.reshape(1, -1)
+        logits = z @ self.X.T                                         # (B, n)
+        s = torch.sigmoid(logits)
+        ll = -F.binary_cross_entropy_with_logits(logits, y.expand_as(logits), reduction="none").sum(-1)
+        w = self.omega
+        return lp + w * ll, gp + w * ((y - s) @ self.X), Hp - w * ((s * (1 - s)) @ (self.X ** 2))
+
+
 class GaussMixTarget(Target):
     """Unnormalised target sum_m w_m N(z | c_m, s^2 I) (for the known-weight check)."""
 
@@ -482,8 +498,14 @@ def apply_init(mix, mode: str, X, y, D: int, seed: int, jitter: float = 0.01, ov
     mix.mu.copy_(mu.to(mix.mu))
 
 
+def make_target(sel: BayesianFeatureSelector) -> RegressionTarget:
+    """The target matching the selector's likelihood (Bernoulli for the logistic selector, plan sec. 30)."""
+    from .logistic_gemss import LogisticBayesianFeatureSelector     # local import: logistic_gemss imports wrappers
+    return LogisticTarget(sel) if isinstance(sel, LogisticBayesianFeatureSelector) else RegressionTarget(sel)
+
+
 def make_runner(sel: BayesianFeatureSelector, estimator: str, **opts) -> WeightFixRunner:
-    return WeightFixRunner(sel.mixture, RegressionTarget(sel), estimator, batch_size=sel.batch_size,
+    return WeightFixRunner(sel.mixture, make_target(sel), estimator, batch_size=sel.batch_size,
                            sel=sel, **opts)
 
 
@@ -494,15 +516,19 @@ class WeightFixGEMSSWrapper(MechanismGEMSSWrapper):
 
     def __init__(self, task: str = "regression", estimator: str = "strat", n_components: int = 6,
                  sparsity: int = 5, estimator_opts: Optional[Dict[str, Any]] = None, **kwargs: Any) -> None:
-        if task != "regression":
-            raise ValueError("weightfix estimators: regression only")
+        if task not in ("regression", "classification"):
+            raise ValueError(f"weightfix estimators: unknown task {task}")
         super().__init__(task, "joint", n_components, sparsity, **kwargs)
         self.estimator, self.estimator_opts = estimator, dict(estimator_opts or {})
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> Dict[str, Dict[str, List[int]]]:
         sel_kwargs = {k: v for k, v in self.params.items() if k in self._SELECTOR_KEYS}
-        sel = BayesianFeatureSelector(n_features=X.shape[1], n_components=self.n_components, X=X, y=y,
-                                      sss_sparsity=self.sparsity, **sel_kwargs)
+        if self.task == "classification":                  # Bernoulli likelihood (plan sec. 30); LogisticTarget
+            from .logistic_gemss import LogisticBayesianFeatureSelector as cls
+        else:
+            cls = BayesianFeatureSelector
+        sel = cls(n_features=X.shape[1], n_components=self.n_components, X=X, y=y,
+                  sss_sparsity=self.sparsity, **sel_kwargs)
         runner = make_runner(sel, self.estimator, **self.estimator_opts)
         t0 = time.perf_counter()
         elbo_hist = runner.run(sel.n_iter)

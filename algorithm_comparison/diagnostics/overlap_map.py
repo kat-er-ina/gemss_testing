@@ -405,6 +405,31 @@ def selftest():
     r2, s_first, s_after = outs[2]
     print(f"spike path: no path == plain {e_none:.1e}; s(0) = {s_first:.3f}, s(T/2) = {r2.spike_at(100):.4f}, "
           f"after run {s_after:.3f}; path changes the fit: {float((outs[0][0].mu - r2.mu).abs().max()):.2f}")
+    # Bernoulli target (plan sec. 30): closed-form gradient and Hessian diagonal of log prior + Bernoulli
+    # log-likelihood vs autograd of the selector's own log density; make_runner picks it for the logistic selector
+    from src.wrappers.logistic_gemss import LogisticBayesianFeatureSelector
+    from src.wrappers.weightfix_gemss import LogisticTarget
+    rng = np.random.default_rng(4); Xc = rng.standard_normal((40, 6)); yc = (Xc[:, 0] - Xc[:, 1] + rng.standard_normal(40) > 0) * 1.0
+    for pr in ("ss", "sss"):
+        kw = dict(prior=pr, var_slab=32.0, var_spike=0.1, weight_slab=0.3 if pr == "ss" else 0.9,
+                  weight_spike=0.7 if pr == "ss" else 0.1, lr=0.01, batch_size=16, n_iter=1)
+        torch.manual_seed(0); lsel = LogisticBayesianFeatureSelector(n_features=6, n_components=2, X=Xc, y=yc, sss_sparsity=2, **kw)
+        Tl = make_runner(lsel, "ngvi").target
+        zt = (0.5 * torch.randn(3, 6, dtype=lsel.X.dtype)).requires_grad_(True)
+        lp, g, H = Tl.terms(zt.detach())
+        if pr == "sss":                                   # the sss prior term is a fresh Monte Carlo draw per call:
+            P_ = lsel.prior; lsel.prior = None            # compare the likelihood part only
+            ll = lsel.log_likelihood(zt)
+            lsel.prior = P_
+            lp0, g0, H0 = Tl._prior_terms(zt.detach()); lp, g, H = lp - lp0, g - g0, H - H0
+        else:
+            ll = Tl.logp(zt)
+        ga = torch.autograd.grad(ll.sum(), zt, create_graph=True)[0]
+        Ha = torch.stack([torch.autograd.grad(ga[:, j].sum(), zt, retain_graph=True)[0][:, j] for j in range(6)], 1)
+        e = max(float((lp - ll).abs().max() / ll.abs().max()), float((g - ga).abs().max() / ga.abs().max()),
+                float((H - Ha).abs().max() / Ha.abs().max()))
+        print(f"Bernoulli target ({pr}): {type(Tl).__name__}; log density / gradient / Hessian diagonal vs autograd, max rel. {e:.1e}")
+        assert isinstance(Tl, LogisticTarget) and e < 1e-5
     assert e_none == 0.0 and abs(s_first - 0.1) < 1e-12 and abs(r2.spike_at(100) - 0.1 ** 0.5 * 0.01 ** 0.5) < 1e-12 \
         and s_after == 0.01
 
