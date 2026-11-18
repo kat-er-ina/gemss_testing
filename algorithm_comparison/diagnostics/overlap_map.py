@@ -32,6 +32,19 @@ from src.hard_data_factory import generate_overlapping_dataset
 
 ARMS = dict(F3J=("ngvi", {}), F3Dec=("ngvi_dec", {}), F3Ens=("ngvi_dec", dict(strat_draws=16)),
             F0J=("f0_joint", {}), F0Dec=("f0_dec", {}))
+# localised coupling (plan sec. 27): the joint fit with components free only on a kept set of coordinates, the rest
+# shared. Kept set: the block itself ("block"; an implementation check, exact here since block and nuisance are
+# orthogonal) or the top-m features by marginal score |x_j^T y| / ||x_j|| (a data-driven screen).
+LOC = dict(F3Jloc_or="block", F3Jloc20=20, F3Jloc50=50)
+ARMS.update({k: ("ngvi", {}) for k in LOC})
+
+
+def loc_keep(X, y, g, spec):
+    """Coordinates the localised joint fit keeps free (all others are shared across components)."""
+    if spec == "block":
+        return np.arange(g)
+    score = np.abs(X.T @ y) / np.linalg.norm(X, axis=0)
+    return np.sort(np.argsort(-score, kind="stable")[:min(int(spec), X.shape[1])])
 GH_X, GH_W = np.polynomial.hermite_e.hermegauss(64)
 GH_W = GH_W / GH_W.sum()
 
@@ -347,6 +360,39 @@ def selftest():
     print(f"per-coordinate weights: vector == scalar (terms / log_prob) {e_same:.1e} / {e_lp:.1e}; nuisance slab weight 0 "
           f"-> Gaussian log density (target, rel.) {e_g:.1e}, ngvi terms rel. {e_t:.1e}, gradient {e_grad:.1e}, curvature {e_H:.1e}")
     assert e_same == 0.0 and e_lp == 0.0 and e_g < 1e-6 and e_t < 1e-6 and e_grad < 1e-3 and e_H < 1e-3
+    # localised coupling (plan sec. 27)
+    Xd, yd = embed_diag(*make_data("M", 0.9, 25, 0, 10)[:2], 40, [7, 8, 9])
+    tm = torch.zeros(40, dtype=torch.bool); tm[10:] = True
+    runs = []
+    for tie in (None, torch.zeros(40, dtype=torch.bool), tm):            # no tie, empty tie, nuisance tied
+        torch.manual_seed(5); sl = selector(Xd, yd, 4, 2.0, 0.1, 0.2)
+        r = make_runner(sl, "ngvi", tie=tie); r.run(300); runs.append(r)
+    e_empty = float(max((runs[0].mu - runs[1].mu).abs().max(), (runs[0].prec - runs[1].prec).abs().max()))
+    e_tied = float(max((runs[2].mu[:, 10:] - runs[2].mu[:1, 10:]).abs().max(),
+                       (runs[2].prec[:, 10:] - runs[2].prec[:1, 10:]).abs().max()))
+    d_blk = float((runs[2].mu[:, :10] - runs[2].mu[:1, :10]).abs().max())
+    # the shared factor's update direction is the gradient of the stratified ELBO estimate w.r.t. the shared mean
+    T = RegressionTarget(selector(Xd, yd, 3, 2.0, 0.1, 0.2)); dt = T.sel.X.dtype
+    K, n = 3, 6
+    gen = torch.Generator().manual_seed(11)
+    mu_b = torch.randn(K, 40, generator=gen, dtype=dt); mu0 = torch.randn(40, generator=gen, dtype=dt).requires_grad_(True)
+    sd = torch.rand(K, 40, generator=gen, dtype=dt) + 0.3; sd[:, tm] = sd[0, tm]
+    eps = torch.randn(K, n, 40, generator=gen, dtype=dt); eps[:, :, tm] = eps[:1, :, tm]
+    la = torch.log_softmax(torch.randn(K, generator=gen, dtype=dt), 0)
+    mu = torch.where(tm, mu0.expand(K, 40), mu_b)
+    zf = (mu[:, None] + eps * sd[:, None]).reshape(K * n, 40)
+    lq = torch.logsumexp(comp_logpdf(zf, mu.detach(), sd ** 2) + la[None], -1)      # pathwise part only
+    ((la.exp() * (T.logp(zf) - lq).view(K, n).mean(1)).sum()).backward()
+    from src.wrappers.weightfix_gemss import logq_terms
+    with torch.no_grad():
+        _, gq, _, _ = logq_terms(zf, mu, sd ** 2, la); _, gp, _ = T.terms(zf)
+        gw = (la.exp()[:, None] * (gq - gp).view(K, n, 40).mean(1)).sum(0)
+    e_dir = float((mu0.grad[tm] + gw[tm]).abs().max() / gw[tm].abs().max())
+    keep = loc_keep(Xd, yd, 10, 20)
+    print(f"localised coupling: empty tie == no tie {e_empty:.1e}; tied coordinates identical across components "
+          f"{e_tied:.1e} (block spread {d_blk:.2f}); shared-factor direction vs autograd (rel.) {e_dir:.1e}; "
+          f"screen m=20 keeps {len(keep)} incl. {int((keep < 10).sum())} block")
+    assert e_empty == 0.0 and e_tied == 0.0 and d_blk > 0.05 and e_dir < 1e-4 and len(keep) == 20
 
 
 def main():
@@ -429,7 +475,16 @@ def main():
                         sel.prior.w_slab, sel.prior.w_spike = wv, 1.0 - wv
                     with torch.no_grad():
                         set_start(sel.mixture, init, ex, seed)
-                    r = make_runner(sel, est, anneal=anneal, **opts)
+                    tie, scr = None, dict(scr_m=np.nan, scr_block=np.nan, scr_cols=np.nan, scr_rel=np.nan, scr_pip10=np.nan)
+                    if arm in LOC:
+                        keep = loc_keep(sel.X.double().numpy(), sel.y.double().numpy().ravel(), g, LOC[arm])
+                        tm = np.ones(Pe, bool); tm[keep] = False; tie = torch.tensor(tm)
+                        big = np.flatnonzero(ex["pip"][:g] > 0.1)      # block features with exact PIP > 0.1
+                        rel = sorted(set(cols) | ({3} if a.design in ("M", "U") and g > 3 else set()))   # signal features
+                        scr = dict(scr_m=len(keep), scr_block=int((keep < g).sum()), scr_cols=int(np.isin(cols, keep).sum()),
+                                   scr_rel=float(np.isin(rel, keep).mean()),
+                                   scr_pip10=float(np.isin(big, keep).mean()) if len(big) else np.nan)
+                    r = make_runner(sel, est, anneal=anneal, tie=tie, **opts)
                     t0 = time.perf_counter(); r.run(a.steps); secs = time.perf_counter() - t0
                     mix = sel.mixture
                     mu_t, var_t = mix.mu.detach().clone(), mix.get_variance().detach().clone()
@@ -449,7 +504,7 @@ def main():
                                nuis_prior=a.nuis_prior,
                                slab=a.slab, n_rows=X.shape[0],
                                elbo=elbo, seconds=secs, leak=leak, n_groups=ngroups, alpha_max_fit=float(al_fit.max()),
-                               **ex_info, **dimension_stats(al_post, mu, var, ex, g))
+                               **scr, **ex_info, **dimension_stats(al_post, mu, var, ex, g))
                     for tag, al in (("fit", al_fit), ("unif", np.full(K, 1.0 / K)), ("post", al_post), ("merged", al_merged)):
                         row.update({f"{k}_{tag}": v for k, v in metrics(al, mu[:, :g], var[:, :g], ex, cols).items()})
                     if w is None:

@@ -206,7 +206,7 @@ class WeightFixRunner:
                  sel: Optional[BayesianFeatureSelector] = None, strat_draws: Optional[int] = None,
                  ngvi_beta: float = 0.02, ngvi_beta_w: Optional[float] = None,
                  fp_every: int = 100, fp_draws: int = 64, fp_eta: float = 1.0, logit_clip: float = 80.0,
-                 anneal: Optional[tuple] = None):
+                 anneal: Optional[tuple] = None, tie: Optional[torch.Tensor] = None):
         if estimator not in ESTIMATORS:
             raise ValueError(f"unknown estimator {estimator}")
         self.mix, self.target, self.est, self.sel = mix, target, estimator, sel
@@ -233,6 +233,16 @@ class WeightFixRunner:
                 self.mu = mix.mu.detach().clone()
                 self.prec = 1.0 / mix.get_variance().detach().clone()
                 self.logit = mix._log_alpha.detach().clone()
+        # localised coupling (plan sec. 27): coordinates with tie[j] = True share one mean and precision across
+        # components (the mixture's components differ only on the others). Started at component 0's values.
+        self.tie = None
+        if tie is not None and bool(torch.as_tensor(tie).any()):
+            if estimator != "ngvi":
+                raise ValueError("tie (localised coupling) is implemented for ngvi only")
+            self.tie = torch.as_tensor(tie, dtype=torch.bool, device=self.mu.device)
+            with torch.no_grad():
+                self.mu[:, self.tie] = self.mu[0, self.tie]
+                self.prec[:, self.tie] = self.prec[0, self.tie]
 
     # -- helpers
     def _h_own(self, z):
@@ -318,7 +328,10 @@ class WeightFixRunner:
         K, n, p = self.K, self.strat_n, self.p
         la = F.log_softmax(torch.cat([self.logit, self.logit.new_zeros(1)]), 0)
         var = 1.0 / self.prec
-        z = (self.mu[:, None, :] + torch.randn(K, n, p, device=var.device) * var.sqrt()[:, None, :]).reshape(K * n, p)
+        eps = torch.randn(K, n, p, device=var.device)
+        if self.tie is not None:                             # shared coordinates: one draw for all components
+            eps[:, :, self.tie] = eps[:1, :, self.tie]
+        z = (self.mu[:, None, :] + eps * var.sqrt()[:, None, :]).reshape(K * n, p)
         if self.est == "ngvi_dec":                           # own component only (no coupling)
             c = torch.arange(K, device=var.device).repeat_interleave(n)
             d, vc = z - self.mu[c], var[c]
@@ -330,6 +343,12 @@ class WeightFixRunner:
         h = (lq - lp).view(K, n).mean(1)
         gc = (gq - gp).view(K, n, p).mean(1)
         Hc = (Hq - Hp).view(K, n, p).mean(1)
+        if self.tie is not None:
+            # a shared factor's expected gradient / curvature is taken under the whole mixture: the
+            # weight-averaged per-component expectations (identical inputs keep the shared values identical)
+            wk = la.exp()[:, None]
+            gc[:, self.tie] = (wk * gc[:, self.tie]).sum(0)
+            Hc[:, self.tie] = (wk * Hc[:, self.tie]).sum(0)
         self._ngvi_update(Hc, gc, h[:-1] - h[-1])
         return float(-(la.exp() * h).sum())
 
