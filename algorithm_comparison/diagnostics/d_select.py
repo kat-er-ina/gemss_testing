@@ -8,6 +8,9 @@ Reference selector: SuSiE's own empirical-Bayes size (number of credible sets wi
 over 100 random supports with Gaussian normalisers that treat the variance as a standard deviation. It is written
 (column elbo) for completeness only.
 
+Plan sec. 47 adds --prior exact (the exact sss density, src/wrappers/exact_sss.py; ELBO then comparable across D),
+--var-slab, --no-cv (semi: full-data fits only) and --y-scale oracle (semi: y divided by the true noise s.d.).
+
 Arms: F3J (joint fit) and F3Ens (ensemble of independent fits), as realdata_pairs.py, sss prior, K 12, m 8, the
 paper's RQ3 hyperparameters, 1/L step rule (plan sec. 37) throughout.
 
@@ -79,13 +82,16 @@ def std(Xtr, Xte=None):
     return (f(Xtr), f(Xte)) if Xte is not None else f(Xtr)
 
 
-def fit_arm(X, y, task, arm, D, seed, K, m, n_iter=None):
+def fit_arm(X, y, task, arm, D, seed, K, m, n_iter=None, exact=False, var_slab=None):
     hp = dict(rq3.GEMSS_HP)
     if n_iter:
         hp["n_iter"] = n_iter
+    if var_slab is not None:
+        hp["var_slab"] = var_slab
     est, opts = ARMS[arm]
     torch.manual_seed(seed)
-    w = WeightFixGEMSSWrapper(task, est, n_components=K, sparsity=D, estimator_opts=dict(opts, step_rule="invL"), **hp)
+    w = WeightFixGEMSSWrapper(task, est, n_components=K, sparsity=D, estimator_opts=dict(opts, step_rule="invL"),
+                              exact_sss=exact, **hp)
     t0 = time.perf_counter()
     sols = w.fit(X, y)
     secs = time.perf_counter() - t0
@@ -119,7 +125,7 @@ def cv_row(task, Xraw, y, tr, te, arm, D, seed, a):
     if task == "regression":
         mu, sd = ytr.mean(), ytr.std()
         ytr, yte = (ytr - mu) / sd, (yte - mu) / sd
-    raw, cl, elbo, secs = fit_arm(Xtr, ytr, task, arm, D, seed, a.K, a.m, a.n_iter)
+    raw, cl, elbo, secs = fit_arm(Xtr, ytr, task, arm, D, seed, a.K, a.m, a.n_iter, a.exact, a.var_slab)
     sc = scores(task, Xtr, ytr, Xte, yte, cl)
     i = int(np.argmin(sc[:, 0]))
     return dict(nsol=len(cl), n_distinct_raw=len(set(raw)), train_loss=sc[i, 0], test_loss=sc[i, 1],
@@ -149,7 +155,7 @@ def run_real(a):
     df, y, fnames = real_data(a.dataset)
     Xraw = df.values.astype(float); n, p = Xraw.shape
     outer_cv = "loo" if n < 40 else 5
-    base = dict(dataset=a.dataset, arm=a.arm, n=n, p=p, K=a.K, m=a.m)
+    base = dict(dataset=a.dataset, arm=a.arm, n=n, p=p, K=a.K, m=a.m, prior=a.prior, var_slab=a.var_slab or 32.0)
     rows = []
     for D in a.D:
         for rep in range(1, a.reps + 1):
@@ -161,7 +167,7 @@ def run_real(a):
             save(rows, a.out)
         X = std(Xraw)
         for seed in a.full_seeds:
-            raw, cl, elbo, secs = fit_arm(X, y, "classification", a.arm, D, seed, a.K, a.m, a.n_iter)
+            raw, cl, elbo, secs = fit_arm(X, y, "classification", a.arm, D, seed, a.K, a.m, a.n_iter, a.exact, a.var_slab)
             named = {f"s{i}": [fnames[j] for j in c] for i, c in enumerate(cl)}
             f1s = [v[0] for v in rq3.best_model_f1(named, df, y, outer_cv).values() if v[0] >= 0] if a.endmodel else []
             cvl = np.array([cv_logloss(X, y, c) for c in cl])
@@ -181,7 +187,7 @@ def run_real(a):
 
 
 # ---------------------------------------------------------------- semi-synthetic (SuSiE protocol)
-def semi_data(xname, S, pve, rep):
+def semi_data(xname, S, pve, rep, return_s2=False):
     df, _, _ = real_data(xname)
     X = std(df.values.astype(float)); n, p = X.shape
     rng = np.random.default_rng([XCODE[xname], S, int(round(100 * pve)), rep])
@@ -193,7 +199,7 @@ def semi_data(xname, S, pve, rep):
     y = xb + rng.normal(0.0, np.sqrt(s2), n)
     C = np.nan_to_num(np.abs(np.corrcoef(X.T)))
     G = {int(j): set(np.flatnonzero(C[j] >= RHO).tolist()) | {int(j)} for j in eff}
-    return X, y, [int(j) for j in eff], G
+    return (X, y, [int(j) for j in eff], G, s2) if return_s2 else (X, y, [int(j) for j in eff], G)
 
 
 def truth(sols, eff, G):
@@ -217,16 +223,19 @@ def truth(sols, eff, G):
 def run_semi(a):
     rows = []
     for rep in a.reps:
-        X, y, eff, G = semi_data(a.xdata, a.S, a.pve, rep)
+        X, y, eff, G, s2 = semi_data(a.xdata, a.S, a.pve, rep, return_s2=True)
         n, p = X.shape
-        base = dict(xdata=a.xdata, S=a.S, pve=a.pve, rep=rep, arm=a.arm, n=n, p=p, K=a.K, m=a.m,
+        base = dict(xdata=a.xdata, S=a.S, pve=a.pve, rep=rep, arm=a.arm, n=n, p=p, K=a.K, m=a.m, prior=a.prior,
+                    var_slab=a.var_slab or 32.0, y_scale=a.y_scale,
                     effects=",".join(map(str, eff)), proxy_sizes=",".join(str(len(G[j])) for j in eff))
         for D in a.D:
-            for f, (tr, te) in enumerate(KFold(5, shuffle=True, random_state=rep).split(X)):
+            for f, (tr, te) in enumerate(KFold(5, shuffle=True, random_state=rep).split(X) if a.cv else []):
                 r = cv_row("regression", X, y, tr, te, a.arm, D, 1000 * rep + f, a)
                 rows.append(dict(base, D=D, kind="cv", fold=f, seed=1000 * rep + f, **r))
-            ys = (y - y.mean()) / y.std()
-            raw, cl, elbo, secs = fit_arm(X, ys, "regression", a.arm, D, rep, a.K, a.m, a.n_iter)
+            # standardised y (default; GEMSS's unit noise variance then overstates the noise by 1/(1 - PVE)), or
+            # 'oracle': y centred and divided by the true noise s.d., so the unit-variance likelihood is correct
+            ys = (y - y.mean()) / (np.sqrt(s2) if a.y_scale == "oracle" else y.std())
+            raw, cl, elbo, secs = fit_arm(X, ys, "regression", a.arm, D, rep, a.K, a.m, a.n_iter, a.exact, a.var_slab)
             t = truth(cl, eff, G)
             if cl:
                 sc = scores("regression", X, ys, X, ys, cl); i = int(np.argmin(sc[:, 0])); q = t["_per"][i]
@@ -235,8 +244,8 @@ def run_semi(a):
             rows.append(dict(base, D=D, kind="full", fold=-1, seed=rep, n_distinct_raw=len(set(raw)), elbo=elbo,
                              fit_seconds=secs, core=core_size(cl), solutions=";".join(",".join(map(str, c)) for c in cl),
                              **t))
-            print(f"  {a.xdata} S {a.S} pve {a.pve} rep {rep} {a.arm} D {D}: CV MSE "
-                  f"{np.mean([q['test_loss'] for q in rows[-6:-1]]):.3f}  full: sel proxy recall "
+            print(f"  {a.xdata} S {a.S} pve {a.pve} rep {rep} {a.arm} D {D} ({a.prior}): "
+                  f"ELBO {elbo:.1f}  full: sel proxy recall "
                   f"{t.get('sel_recall_proxy', np.nan):.2f} n_sig_full {t.get('n_sig_full', 0)} {secs:.0f}s", flush=True)
             save(rows, a.out)
 
@@ -304,9 +313,16 @@ def main():
     ap.add_argument("--n-iter", dest="n_iter", type=int, default=None, help="override 6000 (smoke tests only)")
     ap.add_argument("--no-endmodel", dest="endmodel", action="store_false", help="skip the RQ3 end-model F1 (smoke)")
     ap.add_argument("--rscript", default="Rscript")
+    ap.add_argument("--prior", choices=["mc", "exact"], default="mc",
+                    help="plan sec. 47: GEMSS's Monte Carlo sss estimator (default) or the exact density")
+    ap.add_argument("--var-slab", dest="var_slab", type=float, default=None, help="slab scale (default 32, GEMSS)")
+    ap.add_argument("--no-cv", dest="cv", action="store_false", help="semi: full-data fits only")
+    ap.add_argument("--y-scale", dest="y_scale", choices=["std", "oracle"], default="std",
+                    help="semi, full fits: standardise y (default) or divide by the true noise s.d.")
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
     torch.set_num_threads(1)
+    a.exact = a.prior == "exact"
     if a.mode == "real":
         a.reps = a.reps[0]
         run_real(a)

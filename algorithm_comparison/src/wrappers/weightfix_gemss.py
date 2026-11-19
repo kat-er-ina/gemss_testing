@@ -140,6 +140,8 @@ class RegressionTarget(Target):
 
     def _prior_terms(self, z):
         P = self.prior
+        if getattr(P, "exact", False):                # plan sec. 47: exact structured spike-and-slab density
+            return P.terms(z)
         if isinstance(P, SpikeAndSlabPrior):          # p_j = w1 N(z; 0, s1) + w2 N(z; 0, s2), s = s.d.
             s1, s2, w1, w2 = P.var_slab, P.var_spike, P.w_slab, P.w_spike
             # weights may be per-coordinate tensors (plan sec. 24: Gaussian-nuisance control, slab weight 0 on
@@ -557,10 +559,12 @@ class WeightFixGEMSSWrapper(MechanismGEMSSWrapper):
     ESTIMATORS. Same attributes after fit: elbo_, mu_, var_, alpha_, fit_seconds_."""
 
     def __init__(self, task: str = "regression", estimator: str = "strat", n_components: int = 6,
-                 sparsity: int = 5, estimator_opts: Optional[Dict[str, Any]] = None, **kwargs: Any) -> None:
+                 sparsity: int = 5, estimator_opts: Optional[Dict[str, Any]] = None, exact_sss: bool = False,
+                 **kwargs: Any) -> None:
         if task not in ("regression", "classification"):
             raise ValueError(f"weightfix estimators: unknown task {task}")
         super().__init__(task, "joint", n_components, sparsity, **kwargs)
+        self.exact_sss = exact_sss                  # plan sec. 47: exact sss density instead of GEMSS's estimator
         self.estimator, self.estimator_opts = estimator, dict(estimator_opts or {})
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> Dict[str, Dict[str, List[int]]]:
@@ -571,6 +575,9 @@ class WeightFixGEMSSWrapper(MechanismGEMSSWrapper):
             cls = BayesianFeatureSelector
         sel = cls(n_features=X.shape[1], n_components=self.n_components, X=X, y=y,
                   sss_sparsity=self.sparsity, **sel_kwargs)
+        if self.exact_sss:
+            from .exact_sss import make_exact
+            make_exact(sel)
         runner = make_runner(sel, self.estimator, **self.estimator_opts)
         t0 = time.perf_counter()
         elbo_hist = runner.run(sel.n_iter)
