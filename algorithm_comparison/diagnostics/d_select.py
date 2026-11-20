@@ -10,6 +10,8 @@ over 100 random supports with Gaussian normalisers that treat the variance as a 
 
 Plan sec. 47 adds --prior exact (the exact sss density, src/wrappers/exact_sss.py; ELBO then comparable across D),
 --var-slab, --no-cv (semi: full-data fits only) and --y-scale oracle (semi: y divided by the true noise s.d.).
+Plan sec. 50 (the prior as a design choice) adds --prior ss (GEMSS's standard spike-and-slab, slab weight D/p, i.e.
+expected support size D) and --prior student (GEMSS's Student-t prior, --t-df, --t-scale), and --var-spike.
 
 Arms: F3J (joint fit) and F3Ens (ensemble of independent fits), as realdata_pairs.py, sss prior, K 12, m 8, the
 paper's RQ3 hyperparameters, 1/L step rule (plan sec. 37) throughout.
@@ -82,12 +84,27 @@ def std(Xtr, Xte=None):
     return (f(Xtr), f(Xte)) if Xte is not None else f(Xtr)
 
 
-def fit_arm(X, y, task, arm, D, seed, K, m, n_iter=None, exact=False, var_slab=None):
+def prior_hp(spec, D, p):
+    """Plan sec. 50: the prior as a design choice. spec: the parsed arguments (prior, var_slab, var_spike, t_df,
+    t_scale). Returns (selector kwargs overriding rq3.GEMSS_HP, exact flag)."""
+    hp, pr = {}, getattr(spec, "prior", "mc")
+    if getattr(spec, "var_slab", None) is not None:
+        hp["var_slab"] = spec.var_slab
+    if getattr(spec, "var_spike", None) is not None:
+        hp["var_spike"] = spec.var_spike
+    if pr == "ss":
+        hp.update(prior="ss", weight_slab=D / p, weight_spike=1 - D / p)
+    elif pr == "student":
+        hp.update(prior="student", student_df=spec.t_df, student_scale=spec.t_scale)
+    return hp, pr == "exact"
+
+
+def fit_arm(X, y, task, arm, D, seed, K, m, n_iter=None, spec=None):
     hp = dict(rq3.GEMSS_HP)
     if n_iter:
         hp["n_iter"] = n_iter
-    if var_slab is not None:
-        hp["var_slab"] = var_slab
+    over, exact = prior_hp(spec, D, X.shape[1])
+    hp.update(over)
     est, opts = ARMS[arm]
     torch.manual_seed(seed)
     w = WeightFixGEMSSWrapper(task, est, n_components=K, sparsity=D, estimator_opts=dict(opts, step_rule="invL"),
@@ -98,6 +115,12 @@ def fit_arm(X, y, task, arm, D, seed, K, m, n_iter=None, exact=False, var_slab=N
     raw = [tuple(sorted(s["support"])) for s in sols.values() if s.get("support")]
     cl = [sorted(v["support"]) for v in cluster_supports(raw, X.shape[1], m, D).values() if v.get("support")]
     return raw, cl, w.elbo_, secs
+
+
+def pcols(a):
+    """Row columns recording the prior settings (plan sec. 50)."""
+    return dict(var_spike=a.var_spike or 0.1, t_df=a.t_df if a.prior == "student" else None,
+                t_scale=a.t_scale if a.prior == "student" else None)
 
 
 def endmodel(task):
@@ -125,7 +148,7 @@ def cv_row(task, Xraw, y, tr, te, arm, D, seed, a):
     if task == "regression":
         mu, sd = ytr.mean(), ytr.std()
         ytr, yte = (ytr - mu) / sd, (yte - mu) / sd
-    raw, cl, elbo, secs = fit_arm(Xtr, ytr, task, arm, D, seed, a.K, a.m, a.n_iter, a.exact, a.var_slab)
+    raw, cl, elbo, secs = fit_arm(Xtr, ytr, task, arm, D, seed, a.K, a.m, a.n_iter, a)
     sc = scores(task, Xtr, ytr, Xte, yte, cl)
     i = int(np.argmin(sc[:, 0]))
     return dict(nsol=len(cl), n_distinct_raw=len(set(raw)), train_loss=sc[i, 0], test_loss=sc[i, 1],
@@ -155,7 +178,7 @@ def run_real(a):
     df, y, fnames = real_data(a.dataset)
     Xraw = df.values.astype(float); n, p = Xraw.shape
     outer_cv = "loo" if n < 40 else 5
-    base = dict(dataset=a.dataset, arm=a.arm, n=n, p=p, K=a.K, m=a.m, prior=a.prior, var_slab=a.var_slab or 32.0)
+    base = dict(dataset=a.dataset, arm=a.arm, n=n, p=p, K=a.K, m=a.m, prior=a.prior, var_slab=a.var_slab or 32.0, **pcols(a))
     rows = []
     for D in a.D:
         for rep in range(1, a.reps + 1):
@@ -167,7 +190,7 @@ def run_real(a):
             save(rows, a.out)
         X = std(Xraw)
         for seed in a.full_seeds:
-            raw, cl, elbo, secs = fit_arm(X, y, "classification", a.arm, D, seed, a.K, a.m, a.n_iter, a.exact, a.var_slab)
+            raw, cl, elbo, secs = fit_arm(X, y, "classification", a.arm, D, seed, a.K, a.m, a.n_iter, a)
             named = {f"s{i}": [fnames[j] for j in c] for i, c in enumerate(cl)}
             f1s = [v[0] for v in rq3.best_model_f1(named, df, y, outer_cv).values() if v[0] >= 0] if a.endmodel else []
             cvl = np.array([cv_logloss(X, y, c) for c in cl])
@@ -226,7 +249,7 @@ def run_semi(a):
         X, y, eff, G, s2 = semi_data(a.xdata, a.S, a.pve, rep, return_s2=True)
         n, p = X.shape
         base = dict(xdata=a.xdata, S=a.S, pve=a.pve, rep=rep, arm=a.arm, n=n, p=p, K=a.K, m=a.m, prior=a.prior,
-                    var_slab=a.var_slab or 32.0, y_scale=a.y_scale,
+                    var_slab=a.var_slab or 32.0, y_scale=a.y_scale, **pcols(a),
                     effects=",".join(map(str, eff)), proxy_sizes=",".join(str(len(G[j])) for j in eff))
         for D in a.D:
             for f, (tr, te) in enumerate(KFold(5, shuffle=True, random_state=rep).split(X) if a.cv else []):
@@ -235,7 +258,7 @@ def run_semi(a):
             # standardised y (default; GEMSS's unit noise variance then overstates the noise by 1/(1 - PVE)), or
             # 'oracle': y centred and divided by the true noise s.d., so the unit-variance likelihood is correct
             ys = (y - y.mean()) / (np.sqrt(s2) if a.y_scale == "oracle" else y.std())
-            raw, cl, elbo, secs = fit_arm(X, ys, "regression", a.arm, D, rep, a.K, a.m, a.n_iter, a.exact, a.var_slab)
+            raw, cl, elbo, secs = fit_arm(X, ys, "regression", a.arm, D, rep, a.K, a.m, a.n_iter, a)
             t = truth(cl, eff, G)
             if cl:
                 sc = scores("regression", X, ys, X, ys, cl); i = int(np.argmin(sc[:, 0])); q = t["_per"][i]
@@ -313,8 +336,12 @@ def main():
     ap.add_argument("--n-iter", dest="n_iter", type=int, default=None, help="override 6000 (smoke tests only)")
     ap.add_argument("--no-endmodel", dest="endmodel", action="store_false", help="skip the RQ3 end-model F1 (smoke)")
     ap.add_argument("--rscript", default="Rscript")
-    ap.add_argument("--prior", choices=["mc", "exact"], default="mc",
-                    help="plan sec. 47: GEMSS's Monte Carlo sss estimator (default) or the exact density")
+    ap.add_argument("--prior", choices=["mc", "exact", "ss", "student"], default="mc",
+                    help="sss with GEMSS's Monte Carlo estimator (default) or the exact density (sec. 47); standard "
+                         "spike-and-slab with slab weight D/p or Student-t (sec. 50)")
+    ap.add_argument("--var-spike", dest="var_spike", type=float, default=None, help="spike scale (default 0.1, GEMSS)")
+    ap.add_argument("--t-df", dest="t_df", type=float, default=3.0, help="Student-t degrees of freedom (GEMSS: 3)")
+    ap.add_argument("--t-scale", dest="t_scale", type=float, default=1.0, help="Student-t scale (GEMSS: 1)")
     ap.add_argument("--var-slab", dest="var_slab", type=float, default=None, help="slab scale (default 32, GEMSS)")
     ap.add_argument("--no-cv", dest="cv", action="store_false", help="semi: full-data fits only")
     ap.add_argument("--y-scale", dest="y_scale", choices=["std", "oracle"], default="std",
@@ -322,7 +349,6 @@ def main():
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
     torch.set_num_threads(1)
-    a.exact = a.prior == "exact"
     if a.mode == "real":
         a.reps = a.reps[0]
         run_real(a)

@@ -50,7 +50,7 @@ import torch
 import torch.nn.functional as F
 
 from gemss.feature_selection.inference import BayesianFeatureSelector
-from gemss.feature_selection.models import SpikeAndSlabPrior, StructuredSpikeAndSlabPrior
+from gemss.feature_selection.models import SpikeAndSlabPrior, StructuredSpikeAndSlabPrior, StudentTPrior
 
 from .mechanism_gemss import MechanismGEMSSWrapper, _elbo_plateau_iter
 
@@ -177,6 +177,11 @@ class RegressionTarget(Target):
             g = -z / vs ** 2 + pj * d1
             H = -1.0 / vs ** 2 + pj * d2 + d1 ** 2 * pj * (1 - pj)
             return lp, g, H
+        if isinstance(P, StudentTPrior):              # plan sec. 50: same (unnormalised) density as P.log_prob
+            nu, s2 = float(P.df), float(P.scale) ** 2
+            u = nu * s2 + z ** 2
+            lp = (-0.5 * (nu + 1) * torch.log1p(z ** 2 / (nu * s2))).sum(-1)
+            return lp, -(nu + 1) * z / u, -(nu + 1) * (nu * s2 - z ** 2) / u ** 2
         raise ValueError(f"ngvi: no closed form for prior {type(P).__name__}")
 
     def terms(self, z):
