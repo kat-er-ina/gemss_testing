@@ -1,9 +1,11 @@
 """Plan sec. 50: the prior as a design choice — semi-synthetic screen (F3J, full-data fits, D in {S, 10}).
 
-Usage: analyze_prior.py <prior dir> <dselect dir> <exact dir> [pilot|stage1]
+Usage: analyze_prior.py <prior dir> <dselect dir> <exact dir> [pilot|stage1|rq1]
   pilot   Student-t pilot (T_*.csv; diabetes X, S 1/3/5, replicates 1-10) vs the sss estimator (sec. 46 S_* rows) and
           the exact sss (sec. 47 X32_* rows) on the same replicates; applies the reading fixed in sec. 50.
-  stage1  stage 1a (P_*.csv) plus the two spike-0.1 sss variants from secs. 46-47 (and T_*.csv if present).
+  stage1  stage 1a (P_*.csv, Student-t grid PT_*.csv) plus the two spike-0.1 sss variants from secs. 46-47.
+  rq1     stage 1b (B_*.csv, prior_rq1.py): union-F1, planted recovery, planted found; paired by seed vs the shipped
+          default.
 Variant = prior / spike s.d. (/ df, scale for Student-t). Truth metrics as in d_select.py: sel_recall_proxy (proxy
 recall of the selected solution), share_true_mean, n_sig_full (fully correct near-optimal solutions), nsol.
 Paired differences against the shipped default (sss estimator, spike 0.1): mean, '*' = 95 % CI excludes 0, 'e' = CI
@@ -88,12 +90,24 @@ def pilot(pdir, mcdir, exdir):
 
 
 def stage1(pdir, mcdir, exdir):
-    d = assemble(pdir, mcdir, exdir, ["P_*.csv"])
+    d = assemble(pdir, mcdir, exdir, ["P_*.csv", "PT_*.csv"])
     print("rows per variant:", d.groupby("variant").size().to_dict())
     for Dlab in ["D=S", "D=10"]:
         table(d, Dlab, None)
 
 
+def rq1(pdir, *_):
+    d = load(pdir, "B_*.csv")
+    d["variant"] = d.apply(label, axis=1)
+    print("seeds per variant:", d.groupby("variant").size().to_dict())
+    M = ["union_f1", "planted_recovery", "n_planted_found", "n_distinct_raw", "fit_seconds"]
+    out = d.groupby("variant")[M].mean()
+    w = d.pivot_table(index="seed", columns="variant", values=["union_f1", "planted_recovery", "n_planted_found"])
+    for t, ab in [("union_f1", "dUF1"), ("planted_recovery", "dplanted"), ("n_planted_found", "dfound")]:
+        out[ab] = {v: short(w[(t, v)] - w[(t, REF)]) for v in out.index if v != REF and (t, v) in w}
+    print(out.sort_values("union_f1", ascending=False).round(3).to_string())
+
+
 if __name__ == "__main__":
     mode = sys.argv[4] if len(sys.argv) > 4 else "pilot"
-    {"pilot": pilot, "stage1": stage1}[mode](sys.argv[1], sys.argv[2], sys.argv[3])
+    {"pilot": pilot, "stage1": stage1, "rq1": rq1}[mode](sys.argv[1], sys.argv[2], sys.argv[3])
