@@ -4,7 +4,10 @@
 #   T   Student-t pilot: diabetes X, S {1,3,5} x PVE {0.3,0.6}, replicates 1-10, df {1,3} x scale {1,0.1,0.01}
 #   1   stage 1a: diabetes and PCOS X, S {1,3,5,10} x PVE {0.3,0.6}, replicates 1-20, seven variants:
 #       sss estimator spike 0.03/0.01, exact sss spike 0.03/0.01, standard ss (slab weight D/p) spike 0.1/0.03/0.01
-# Usage: submit_prior.sh T|1   (submits only). Results: ~/amvi_compare/results/prior/
+#   T1  stage 1a for Student-t (user 2026-11-22: "keep testing student"): the stage-1a grid, df {1,3} x scale
+#       {0.03,0.01,0.003} (the pilot's best scale 0.01 was at the edge of its grid)
+#   B   stage 1b: RQ1 benchmark (prior_rq1.py, E1c setting, seeds 1-25), all stage-1 variants incl. Student-t
+# Usage: submit_prior.sh T|1|T1|B   (submits only). Results: ~/amvi_compare/results/prior/
 set -u
 BASE=$HOME/amvi_compare
 G=$BASE/gemss_testing/algorithm_comparison
@@ -39,6 +42,21 @@ T)
         --reps $(seq -s ' ' 1 20) --out $R/$t.csv"
     done
   done; done; done ;;
-*) echo "usage: submit_prior.sh T|1"; exit 1 ;;
+T1)
+  for x in diabetes pcos; do for S in 1 3 5 10; do for v in 0.3 0.6; do for df in 1 3; do for sc in 0.03 0.01 0.003; do
+    t=PT_${x}_S${S}_pve${v}_df${df}_sc${sc}
+    sub $t 3:00:00 "$HDR; $PY --prior student --t-df $df --t-scale $sc --xdata $x --S $S --pve $v --D $(dlist $S) \
+      --reps $(seq -s ' ' 1 20) --out $R/$t.csv"
+  done; done; done; done; done ;;
+B)
+  RQ="../.venv/bin/python diagnostics/prior_rq1.py --seeds $(seq -s ' ' 1 25)"
+  for spec in "mc 0.1" "mc 0.03" "mc 0.01" "exact 0.1" "exact 0.03" "exact 0.01" "ss 0.1" "ss 0.03" "ss 0.01"; do
+    set -- $spec; [ $1 = exact ] && tl=12:00:00 || tl=3:00:00
+    t=B_$1_sp$2; sub $t $tl "$HDR; $RQ --prior $1 --var-spike $2 --out $R/$t.csv"
+  done
+  for df in 1 3; do for sc in 0.03 0.01 0.003; do
+    t=B_student_df${df}_sc${sc}; sub $t 3:00:00 "$HDR; $RQ --prior student --t-df $df --t-scale $sc --out $R/$t.csv"
+  done; done ;;
+*) echo "usage: submit_prior.sh T|1|T1|B"; exit 1 ;;
 esac
 echo "submitted: $(grep -vc FAILED $IDS)  failed: $(grep -c FAILED $IDS)"
