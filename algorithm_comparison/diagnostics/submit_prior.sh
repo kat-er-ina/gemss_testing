@@ -9,7 +9,11 @@
 #   B   stage 1b: RQ1 benchmark (prior_rq1.py, E1c setting, seeds 1-25), all stage-1 variants incl. Student-t
 #   E   sec. 50.4, empirical-Bayes Student-t (scale fitted inside the loop, started wide at 1): stage-1a grid (PE_*)
 #       and RQ1 (B_student_eb*), three variants: scale only with df 3, scale only with df 1, df and scale (df <= 10)
-# Usage: submit_prior.sh T|1|T1|B|E   (submits only). Results: ~/amvi_compare/results/prior/
+#   C   stage 1c (sec. 50.6, user 2026-11-22: "ok go"): seven designs x six priors, seeds 1-25 (prior_rq1.py):
+#       distinct blocks, latent rank 5, latent rank 10, block-equicorrelation, distinct classification, latent rank-2
+#       classification, latent rank 2 at p 1000; priors: estimator 0.1 (shipped) and 0.03, exact 0.03, Student-t
+#       df 3 scale 0.01, EB-scale Student-t df 3 (start 1), ss 0.03
+# Usage: submit_prior.sh T|1|T1|B|E|C   (submits only). Results: ~/amvi_compare/results/prior/
 set -u
 BASE=$HOME/amvi_compare
 G=$BASE/gemss_testing/algorithm_comparison
@@ -70,6 +74,21 @@ E)
     done; done; done
     t=B_student_eb${eb}_df${df}; sub $t 3:00:00 "$HDR; $RQ --prior student --t-eb $eb --t-df $df --t-scale 1 --out $R/$t.csv"
   done ;;
-*) echo "usage: submit_prior.sh T|1|T1|B|E"; exit 1 ;;
+C)
+  RQ="../.venv/bin/python diagnostics/prior_rq1.py --seeds $(seq -s ' ' 1 25)"
+  for design in "distinct|--generator distinct" "latr5|--generator latent --rank 5" "latr10|--generator latent --rank 10" \
+                "equicorr|--generator equicorr" "distinctcls|--generator distinct --binarize" \
+                "latr2cls|--generator latent --binarize" "latr2p1000|--generator latent --p 1000"; do
+    dn=${design%%|*}; dargs=${design#*|}
+    for spec in "mc_0.1|--prior mc --var-spike 0.1" "mc_0.03|--prior mc --var-spike 0.03" \
+                "exact_0.03|--prior exact --var-spike 0.03" "t_df3_sc0.01|--prior student --t-df 3 --t-scale 0.01" \
+                "teb_df3|--prior student --t-eb scale --t-df 3 --t-scale 1" "ss_0.03|--prior ss --var-spike 0.03"; do
+      vn=${spec%%|*}; vargs=${spec#*|}
+      case $vn in exact*) tl=12:00:00 ;; *) tl=3:00:00 ;; esac
+      [ $dn = latr2p1000 ] && { case $vn in exact*) tl=23:00:00 ;; *) tl=8:00:00 ;; esac; }
+      t=C_${dn}_${vn}; sub $t $tl "$HDR; $RQ $dargs $vargs --out $R/$t.csv"
+    done
+  done ;;
+*) echo "usage: submit_prior.sh T|1|T1|B|E|C"; exit 1 ;;
 esac
 echo "submitted: $(grep -vc FAILED $IDS)  failed: $(grep -c FAILED $IDS)"
