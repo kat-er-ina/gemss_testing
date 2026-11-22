@@ -35,6 +35,9 @@ def main():
     ap.add_argument("--var-spike", dest="var_spike", type=float, default=None)
     ap.add_argument("--t-df", dest="t_df", type=float, default=3.0)
     ap.add_argument("--t-scale", dest="t_scale", type=float, default=1.0)
+    ap.add_argument("--t-eb", dest="t_eb", choices=["none", "scale", "both"], default="none")
+    ap.add_argument("--t-eb-lr", dest="t_eb_lr", type=float, default=0.005)
+    ap.add_argument("--t-df-max", dest="t_df_max", type=float, default=10.0)
     ap.add_argument("--overlap", type=int, default=4)
     ap.add_argument("--seeds", type=int, nargs="+", default=list(range(1, 26)))
     ap.add_argument("--n-iter", dest="n_iter", type=int, default=None)
@@ -55,7 +58,8 @@ def main():
         best = [max((jac(s, r) for r in ret), default=0.0) for s in pl]
         rows.append(dict(prior=a.prior, var_spike=a.var_spike or 0.1,
                          t_df=a.t_df if a.prior == "student" else None,
-                         t_scale=a.t_scale if a.prior == "student" else None, overlap=a.overlap, seed=seed, K=K, m=M,
+                         t_scale=a.t_scale if a.prior == "student" else None,
+                         t_eb=a.t_eb if a.prior == "student" else None, **ds.eb_final(), overlap=a.overlap, seed=seed, K=K, m=M,
                          union_f1=uf, planted_recovery=float(np.mean(best)), n_planted_found=int(sum(b >= 0.8 for b in best)),
                          n_distinct_raw=len(set(raw)), elbo=elbo, fit_seconds=secs,
                          solutions=";".join(",".join(map(str, sorted(s))) for s in ret)))

@@ -12,6 +12,8 @@ Plan sec. 47 adds --prior exact (the exact sss density, src/wrappers/exact_sss.p
 --var-slab, --no-cv (semi: full-data fits only) and --y-scale oracle (semi: y divided by the true noise s.d.).
 Plan sec. 50 (the prior as a design choice) adds --prior ss (GEMSS's standard spike-and-slab, slab weight D/p, i.e.
 expected support size D) and --prior student (GEMSS's Student-t prior, --t-df, --t-scale), and --var-spike.
+Sec. 50.4 adds --t-eb scale|both: the Student-t scale (and df) fitted by empirical Bayes inside the loop, started at
+--t-df / --t-scale (weightfix_gemss eb_student); rows record the final values (eb_df_final, eb_scale_final).
 
 Arms: F3J (joint fit) and F3Ens (ensemble of independent fits), as realdata_pairs.py, sss prior, K 12, m 8, the
 paper's RQ3 hyperparameters, 1/L step rule (plan sec. 37) throughout.
@@ -99,7 +101,19 @@ def prior_hp(spec, D, p):
     return hp, pr == "exact"
 
 
+LAST_WRAPPER = None      # the last fitted wrapper (sec. 50.4: callers read its eb_hist_)
+
+
+def eb_opts(spec):
+    """Sec. 50.4: runner options for the empirical-Bayes Student-t, or {}."""
+    eb = getattr(spec, "t_eb", "none")
+    if getattr(spec, "prior", "mc") != "student" or eb == "none":
+        return {}
+    return {"eb_student": dict(fit_df=(eb == "both"), lr=spec.t_eb_lr, df_max=spec.t_df_max)}
+
+
 def fit_arm(X, y, task, arm, D, seed, K, m, n_iter=None, spec=None):
+    global LAST_WRAPPER
     hp = dict(rq3.GEMSS_HP)
     if n_iter:
         hp["n_iter"] = n_iter
@@ -107,8 +121,9 @@ def fit_arm(X, y, task, arm, D, seed, K, m, n_iter=None, spec=None):
     hp.update(over)
     est, opts = ARMS[arm]
     torch.manual_seed(seed)
-    w = WeightFixGEMSSWrapper(task, est, n_components=K, sparsity=D, estimator_opts=dict(opts, step_rule="invL"),
-                              exact_sss=exact, **hp)
+    w = WeightFixGEMSSWrapper(task, est, n_components=K, sparsity=D,
+                              estimator_opts=dict(opts, step_rule="invL", **eb_opts(spec)), exact_sss=exact, **hp)
+    LAST_WRAPPER = w
     t0 = time.perf_counter()
     sols = w.fit(X, y)
     secs = time.perf_counter() - t0
@@ -120,7 +135,14 @@ def fit_arm(X, y, task, arm, D, seed, K, m, n_iter=None, spec=None):
 def pcols(a):
     """Row columns recording the prior settings (plan sec. 50)."""
     return dict(var_spike=a.var_spike or 0.1, t_df=a.t_df if a.prior == "student" else None,
-                t_scale=a.t_scale if a.prior == "student" else None)
+                t_scale=a.t_scale if a.prior == "student" else None,
+                t_eb=getattr(a, "t_eb", "none") if a.prior == "student" else None)
+
+
+def eb_final():
+    """Sec. 50.4: final (df, scale) of the last fit's empirical-Bayes Student-t, else empty."""
+    h = getattr(LAST_WRAPPER, "eb_hist_", None)
+    return dict(eb_df_final=h[-1][1], eb_scale_final=h[-1][2]) if h else {}
 
 
 def endmodel(task):
@@ -153,7 +175,7 @@ def cv_row(task, Xraw, y, tr, te, arm, D, seed, a):
     i = int(np.argmin(sc[:, 0]))
     return dict(nsol=len(cl), n_distinct_raw=len(set(raw)), train_loss=sc[i, 0], test_loss=sc[i, 1],
                 test_f1=sc[i, 2], test_acc=sc[i, 3], test_loss_mean=sc[:, 1].mean(), test_loss_min=sc[:, 1].min(),
-                test_loss_max=sc[:, 1].max(), elbo=elbo, fit_seconds=secs)
+                test_loss_max=sc[:, 1].max(), elbo=elbo, fit_seconds=secs, **eb_final())
 
 
 def cv_logloss(X, y, s, folds=5):
@@ -201,7 +223,7 @@ def run_real(a):
                              f1_mean=np.mean(f1s) if f1s else np.nan, f1_min=min(f1s) if f1s else np.nan,
                              dissim=dmean, cvloss_best=cvl[b, 0], cvloss_best_se=cvl[b, 1],
                              cvloss_mean=cvl[:, 0].mean(), n_rashomon=len(rash), core=core_size(cl),
-                             core_rashomon=core_size(rash), elbo=elbo, fit_seconds=secs,
+                             core_rashomon=core_size(rash), elbo=elbo, fit_seconds=secs, **eb_final(),
                              solutions=";".join(",".join(map(str, c)) for c in cl),
                              rashomon=";".join(",".join(map(str, c)) for c in rash)))
             print(f"  {a.dataset} {a.arm} D {D} full seed {seed}: nsol {len(cl)} F1 best {rows[-1]['f1_best']:.3f} "
@@ -265,7 +287,7 @@ def run_semi(a):
                 t.update(sel_recall_strict=q[0], sel_recall_proxy=q[1], sel_share_true=q[2], sel_full_cover=q[3])
             t.pop("_per", None)
             rows.append(dict(base, D=D, kind="full", fold=-1, seed=rep, n_distinct_raw=len(set(raw)), elbo=elbo,
-                             fit_seconds=secs, core=core_size(cl), solutions=";".join(",".join(map(str, c)) for c in cl),
+                             fit_seconds=secs, **eb_final(), core=core_size(cl), solutions=";".join(",".join(map(str, c)) for c in cl),
                              **t))
             print(f"  {a.xdata} S {a.S} pve {a.pve} rep {rep} {a.arm} D {D} ({a.prior}): "
                   f"ELBO {elbo:.1f}  full: sel proxy recall "
@@ -342,6 +364,10 @@ def main():
     ap.add_argument("--var-spike", dest="var_spike", type=float, default=None, help="spike scale (default 0.1, GEMSS)")
     ap.add_argument("--t-df", dest="t_df", type=float, default=3.0, help="Student-t degrees of freedom (GEMSS: 3)")
     ap.add_argument("--t-scale", dest="t_scale", type=float, default=1.0, help="Student-t scale (GEMSS: 1)")
+    ap.add_argument("--t-eb", dest="t_eb", choices=["none", "scale", "both"], default="none",
+                    help="sec. 50.4: fit the Student-t scale (and df) by empirical Bayes, started at --t-df/--t-scale")
+    ap.add_argument("--t-eb-lr", dest="t_eb_lr", type=float, default=0.005, help="Adam step on log df / log scale")
+    ap.add_argument("--t-df-max", dest="t_df_max", type=float, default=10.0, help="upper bound on the fitted df")
     ap.add_argument("--var-slab", dest="var_slab", type=float, default=None, help="slab scale (default 32, GEMSS)")
     ap.add_argument("--no-cv", dest="cv", action="store_false", help="semi: full-data fits only")
     ap.add_argument("--y-scale", dest="y_scale", choices=["std", "oracle"], default="std",

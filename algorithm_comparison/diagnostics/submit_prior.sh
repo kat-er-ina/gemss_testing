@@ -7,7 +7,9 @@
 #   T1  stage 1a for Student-t (user 2026-11-22: "keep testing student"): the stage-1a grid, df {1,3} x scale
 #       {0.03,0.01,0.003} (the pilot's best scale 0.01 was at the edge of its grid)
 #   B   stage 1b: RQ1 benchmark (prior_rq1.py, E1c setting, seeds 1-25), all stage-1 variants incl. Student-t
-# Usage: submit_prior.sh T|1|T1|B   (submits only). Results: ~/amvi_compare/results/prior/
+#   E   sec. 50.4, empirical-Bayes Student-t (scale fitted inside the loop, started wide at 1): stage-1a grid (PE_*)
+#       and RQ1 (B_student_eb*), three variants: scale only with df 3, scale only with df 1, df and scale (df <= 10)
+# Usage: submit_prior.sh T|1|T1|B|E   (submits only). Results: ~/amvi_compare/results/prior/
 set -u
 BASE=$HOME/amvi_compare
 G=$BASE/gemss_testing/algorithm_comparison
@@ -57,6 +59,17 @@ B)
   for df in 1 3; do for sc in 0.03 0.01 0.003; do
     t=B_student_df${df}_sc${sc}; sub $t 3:00:00 "$HDR; $RQ --prior student --t-df $df --t-scale $sc --out $R/$t.csv"
   done; done ;;
-*) echo "usage: submit_prior.sh T|1|T1|B"; exit 1 ;;
+E)
+  RQ="../.venv/bin/python diagnostics/prior_rq1.py --seeds $(seq -s ' ' 1 25)"
+  for spec in "scale 3" "scale 1" "both 3"; do
+    set -- $spec; eb=$1; df=$2
+    for x in diabetes pcos; do for S in 1 3 5 10; do for v in 0.3 0.6; do
+      t=PE_${x}_S${S}_pve${v}_eb${eb}_df${df}
+      sub $t 3:00:00 "$HDR; $PY --prior student --t-eb $eb --t-df $df --t-scale 1 --xdata $x --S $S --pve $v \
+        --D $(dlist $S) --reps $(seq -s ' ' 1 20) --out $R/$t.csv"
+    done; done; done
+    t=B_student_eb${eb}_df${df}; sub $t 3:00:00 "$HDR; $RQ --prior student --t-eb $eb --t-df $df --t-scale 1 --out $R/$t.csv"
+  done ;;
+*) echo "usage: submit_prior.sh T|1|T1|B|E"; exit 1 ;;
 esac
 echo "submitted: $(grep -vc FAILED $IDS)  failed: $(grep -c FAILED $IDS)"

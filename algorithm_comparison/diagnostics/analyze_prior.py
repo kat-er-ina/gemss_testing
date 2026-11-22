@@ -37,6 +37,9 @@ def load(d, g):
 def label(r):
     sp = f"{r.var_spike:g}"
     if r.prior == "student":
+        eb = r.get("t_eb") if hasattr(r, "get") else None
+        if isinstance(eb, str) and eb != "none":
+            return f"t/eb-{eb}/df{r.t_df:g}/start{r.t_scale:g}"
         return f"t/df{r.t_df:g}/sc{r.t_scale:g}"
     return f"{r.prior}/{sp}"
 
@@ -90,7 +93,7 @@ def pilot(pdir, mcdir, exdir):
 
 
 def stage1(pdir, mcdir, exdir):
-    d = assemble(pdir, mcdir, exdir, ["P_*.csv", "PT_*.csv"])
+    d = assemble(pdir, mcdir, exdir, ["P_*.csv", "PT_*.csv", "PE_*.csv"])
     print("rows per variant:", d.groupby("variant").size().to_dict())
     for Dlab in ["D=S", "D=10"]:
         table(d, Dlab, None)

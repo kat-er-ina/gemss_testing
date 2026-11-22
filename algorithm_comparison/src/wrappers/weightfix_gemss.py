@@ -238,7 +238,8 @@ class WeightFixRunner:
                  ngvi_beta: float = 0.02, ngvi_beta_w: Optional[float] = None,
                  fp_every: int = 100, fp_draws: int = 64, fp_eta: float = 1.0, logit_clip: float = 80.0,
                  anneal: Optional[tuple] = None, tie: Optional[torch.Tensor] = None,
-                 spike_path: Optional[tuple] = None, step_rule: str = "fixed", pow_iters0: int = 30):
+                 spike_path: Optional[tuple] = None, step_rule: str = "fixed", pow_iters0: int = 30,
+                 eb_student: Optional[Dict[str, Any]] = None):
         if estimator not in ESTIMATORS:
             raise ValueError(f"unknown estimator {estimator}")
         self.mix, self.target, self.est, self.sel = mix, target, estimator, sel
@@ -296,6 +297,46 @@ class WeightFixRunner:
             with torch.no_grad():
                 self.mu[:, self.tie] = self.mu[0, self.tie]
                 self.prec[:, self.tie] = self.prec[0, self.tie]
+
+        # empirical-Bayes Student-t (plan sec. 50.4): the prior's global df and/or scale are fitted inside the loop by
+        # Adam on (log df, log scale), maximising the ELBO's prior term sum_k alpha_k E_qk[log t(z; df, scale)] with
+        # the NORMALISED density (gemss's log_prob drops the constant). Started at the prior's df and scale, so a
+        # wide start scale gives a data-driven narrowing path (cf. the spike-width path, sec. 28 / 36).
+        self.eb = None
+        if eb_student:
+            if sel is None or not isinstance(sel.prior, StudentTPrior):
+                raise ValueError("eb_student needs GEMSS's Student-t prior")
+            if estimator not in ("ngvi", "ngvi_dec"):
+                raise ValueError("eb_student is implemented for ngvi / ngvi_dec")
+            P = sel.prior
+            self.eb = dict(fit_df=bool(eb_student.get("fit_df", True)), fit_scale=bool(eb_student.get("fit_scale", True)),
+                           lo=torch.log(torch.tensor([eb_student.get("df_min", 0.2), eb_student.get("scale_min", 1e-4)])),
+                           hi=torch.log(torch.tensor([eb_student.get("df_max", 50.0), eb_student.get("scale_max", 10.0)])),
+                           every=int(eb_student.get("hist_every", 100)))
+            self.eb_theta = torch.log(torch.tensor([float(P.df), float(P.scale)])).requires_grad_(True)
+            self.eb_opt = torch.optim.Adam([self.eb_theta], lr=float(eb_student.get("lr", 0.005)))
+            self.eb_hist: List[tuple] = [(0, float(P.df), float(P.scale))]
+
+    def _eb_step(self, z, wk):
+        """One Adam step on (log df, log scale); z (K, n, p) detached draws, wk (K,) component weights."""
+        with torch.enable_grad():
+            th = self.eb_theta
+            nu, sc = th[0].exp(), th[1].exp()
+            lp = (torch.lgamma((nu + 1) / 2) - torch.lgamma(nu / 2) - 0.5 * torch.log(nu * math.pi) - torch.log(sc)
+                  - 0.5 * (nu + 1) * torch.log1p(z ** 2 / (nu * sc ** 2)))
+            obj = (wk * lp.sum(-1).mean(1)).sum()
+            self.eb_opt.zero_grad(); (-obj).backward()
+            if not self.eb["fit_df"]:
+                th.grad[0] = 0.0
+            if not self.eb["fit_scale"]:
+                th.grad[1] = 0.0
+            self.eb_opt.step()
+            with torch.no_grad():
+                th.copy_(torch.maximum(torch.minimum(th, self.eb["hi"]), self.eb["lo"]))
+        P = self.sel.prior
+        P.df, P.scale = float(th[0].exp()), float(th[1].exp())
+        if (self.t + 1) % self.eb["every"] == 0:
+            self.eb_hist.append((self.t + 1, P.df, P.scale))
 
     # -- helpers
     def _h_own(self, z):
@@ -393,6 +434,8 @@ class WeightFixRunner:
         else:
             lq, gq, Hq, _ = logq_terms(z, self.mu, var, la)
         lp, gp, Hp = self.target.terms(z)
+        if self.eb is not None:
+            self._eb_step(z.view(K, n, p), la.exp())
         h = (lq - lp).view(K, n).mean(1)
         gc = (gq - gp).view(K, n, p).mean(1)
         Hc = (Hq - Hp).view(K, n, p).mean(1)
@@ -592,6 +635,7 @@ class WeightFixGEMSSWrapper(MechanismGEMSSWrapper):
         with torch.no_grad():
             z_eval, _ = sel.mixture.sample(max(256, sel.batch_size))
             self.elbo_ = float(sel.elbo(z_eval).item())
+        self.eb_hist_ = list(getattr(runner, "eb_hist", []))
         self.mu_ = sel.mixture.mu.detach().cpu().numpy()
         self.var_ = sel.mixture.get_variance().detach().cpu().numpy()
         self.alpha_ = sel.mixture.get_alpha().detach().cpu().numpy()
