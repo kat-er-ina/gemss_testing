@@ -188,7 +188,8 @@ class RegressionTarget(Target):
         lp, gp, Hp = self._prior_terms(z)
         res = z @ self.X.T - self.y[None]
         w = self.omega
-        return lp - 0.5 * w * (res ** 2).sum(-1), gp - w * (res @ self.X), Hp - w * self.colsq[None]
+        self.last_rss = (res ** 2).sum(-1)              # per draw; the noise-variance estimate reads it (sec. 50.8)
+        return lp - 0.5 * w * self.last_rss, gp - w * (res @ self.X), Hp - w * self.colsq[None]
 
 
 class LogisticTarget(RegressionTarget):
@@ -239,7 +240,7 @@ class WeightFixRunner:
                  fp_every: int = 100, fp_draws: int = 64, fp_eta: float = 1.0, logit_clip: float = 80.0,
                  anneal: Optional[tuple] = None, tie: Optional[torch.Tensor] = None,
                  spike_path: Optional[tuple] = None, step_rule: str = "fixed", pow_iters0: int = 30,
-                 eb_student: Optional[Dict[str, Any]] = None):
+                 eb_student: Optional[Dict[str, Any]] = None, noise: Optional[Dict[str, Any]] = None):
         if estimator not in ESTIMATORS:
             raise ValueError(f"unknown estimator {estimator}")
         self.mix, self.target, self.est, self.sel = mix, target, estimator, sel
@@ -316,6 +317,39 @@ class WeightFixRunner:
             self.eb_theta = torch.log(torch.tensor([float(P.df), float(P.scale)])).requires_grad_(True)
             self.eb_opt = torch.optim.Adam([self.eb_theta], lr=float(eb_student.get("lr", 0.005)))
             self.eb_hist: List[tuple] = [(0, float(P.df), float(P.scale))]
+
+        # noise variance (plan sec. 50.8): GEMSS fixes it at 1. The likelihood weight omega = 1 / sigma^2 enters the
+        # value, gradient, curvature and the 1/L bound, so a noise variance is a weight. 'fixed': sigma^2 = var (an
+        # oracle in diagnostics); 'eb': empirical Bayes, the closed-form M-step sigma^2 = E_q ||y - X z||^2 / N,
+        # smoothed (sigma^2 <- (1 - rho) sigma^2 + rho * estimate), started at `start` (GEMSS's 1), so the likelihood
+        # sharpens as the fit improves. Regression only.
+        self.noise = None
+        if noise:
+            if not isinstance(target, RegressionTarget) or isinstance(target, LogisticTarget):
+                raise ValueError("noise: regression only")
+            if self.anneal:
+                raise ValueError("noise and likelihood annealing both set omega")
+            if estimator not in ("ngvi", "ngvi_dec"):
+                raise ValueError("noise is implemented for ngvi / ngvi_dec")
+            mode = noise.get("mode", "eb")
+            v0 = float(noise["var"]) if mode == "fixed" else float(noise.get("start", 1.0))
+            self.noise = dict(mode=mode, rho=float(noise.get("rho", 0.01)), vmin=float(noise.get("var_min", 1e-4)),
+                              vmax=float(noise.get("var_max", 100.0)), every=int(noise.get("hist_every", 100)),
+                              N=int(target.y.shape[0]))
+            self.noise_var = v0
+            target.omega = 1.0 / v0
+            self.noise_hist: List[tuple] = [(0, v0)]
+
+    def _noise_step(self, wk):
+        """Empirical-Bayes noise variance from the draws of this step (target.last_rss), then omega = 1 / sigma^2."""
+        K = wk.shape[0]
+        rss = self.target.last_rss.view(K, -1).mean(1)
+        est = float((wk * rss).sum()) / self.noise["N"]
+        v = (1 - self.noise["rho"]) * self.noise_var + self.noise["rho"] * est
+        self.noise_var = min(max(v, self.noise["vmin"]), self.noise["vmax"])
+        self.target.omega = 1.0 / self.noise_var
+        if (self.t + 1) % self.noise["every"] == 0:
+            self.noise_hist.append((self.t + 1, self.noise_var))
 
     def _eb_step(self, z, wk):
         """One Adam step on (log df, log scale); z (K, n, p) detached draws, wk (K,) component weights."""
@@ -436,6 +470,8 @@ class WeightFixRunner:
         lp, gp, Hp = self.target.terms(z)
         if self.eb is not None:
             self._eb_step(z.view(K, n, p), la.exp())
+        if self.noise is not None and self.noise["mode"] == "eb":
+            self._noise_step(la.exp())
         h = (lq - lp).view(K, n).mean(1)
         gc = (gq - gp).view(K, n, p).mean(1)
         Hc = (Hq - Hp).view(K, n, p).mean(1)
@@ -608,11 +644,12 @@ class WeightFixGEMSSWrapper(MechanismGEMSSWrapper):
 
     def __init__(self, task: str = "regression", estimator: str = "strat", n_components: int = 6,
                  sparsity: int = 5, estimator_opts: Optional[Dict[str, Any]] = None, exact_sss: bool = False,
-                 **kwargs: Any) -> None:
+                 init_mu: Optional[np.ndarray] = None, **kwargs: Any) -> None:
         if task not in ("regression", "classification"):
             raise ValueError(f"weightfix estimators: unknown task {task}")
         super().__init__(task, "joint", n_components, sparsity, **kwargs)
         self.exact_sss = exact_sss                  # plan sec. 47: exact sss density instead of GEMSS's estimator
+        self.init_mu = init_mu                      # plan sec. 50.8: start the component means here (K, p)
         self.estimator, self.estimator_opts = estimator, dict(estimator_opts or {})
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> Dict[str, Dict[str, List[int]]]:
@@ -626,6 +663,9 @@ class WeightFixGEMSSWrapper(MechanismGEMSSWrapper):
         if self.exact_sss:
             from .exact_sss import make_exact
             make_exact(sel)
+        if self.init_mu is not None:
+            with torch.no_grad():
+                sel.mixture.mu.copy_(torch.as_tensor(self.init_mu, dtype=sel.mixture.mu.dtype))
         runner = make_runner(sel, self.estimator, **self.estimator_opts)
         t0 = time.perf_counter()
         elbo_hist = runner.run(sel.n_iter)
@@ -636,6 +676,11 @@ class WeightFixGEMSSWrapper(MechanismGEMSSWrapper):
             z_eval, _ = sel.mixture.sample(max(256, sel.batch_size))
             self.elbo_ = float(sel.elbo(z_eval).item())
         self.eb_hist_ = list(getattr(runner, "eb_hist", []))
+        self.noise_hist_ = list(getattr(runner, "noise_hist", []))
+        # the run's objective under the fitted model (likelihood weight omega = 1 / sigma^2), mean of the last 100
+        # steps, plus the Gaussian normaliser N/2 log omega so that runs with different sigma^2 compare
+        om = float(getattr(runner.target, "omega", 1.0))
+        self.elbo_model_ = (float(np.mean(elbo_hist[-100:])) + 0.5 * len(y) * math.log(om)) if elbo_hist else float("nan")
         self.mu_ = sel.mixture.mu.detach().cpu().numpy()
         self.var_ = sel.mixture.get_variance().detach().cpu().numpy()
         self.alpha_ = sel.mixture.get_alpha().detach().cpu().numpy()

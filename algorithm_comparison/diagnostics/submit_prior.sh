@@ -13,7 +13,9 @@
 #       distinct blocks, latent rank 5, latent rank 10, block-equicorrelation, distinct classification, latent rank-2
 #       classification, latent rank 2 at p 1000; priors: estimator 0.1 (shipped) and 0.03, exact 0.03, Student-t
 #       df 3 scale 0.01, EB-scale Student-t df 3 (start 1), ss 0.03
-# Usage: submit_prior.sh T|1|T1|B|E|C   (submits only). Results: ~/amvi_compare/results/prior/
+#   D   sec. 50.8 diagnosis (user 2026-11-23: "investigate 2"): distinct design, 4 priors (estimator 0.03, exact 0.03,
+#       ss 0.03, EB-scale Student-t) x start {default, planted} x noise {unit, eb, oracle}, seeds 1-25
+# Usage: submit_prior.sh T|1|T1|B|E|C|D   (submits only). Results: ~/amvi_compare/results/prior/
 set -u
 BASE=$HOME/amvi_compare
 G=$BASE/gemss_testing/algorithm_comparison
@@ -89,6 +91,16 @@ C)
       t=C_${dn}_${vn}; sub $t $tl "$HDR; $RQ $dargs $vargs --out $R/$t.csv"
     done
   done ;;
-*) echo "usage: submit_prior.sh T|1|T1|B|E|C"; exit 1 ;;
+D)
+  RQ="../.venv/bin/python diagnostics/prior_rq1.py --generator distinct --seeds $(seq -s ' ' 1 25)"
+  for spec in "mc_0.03|--prior mc --var-spike 0.03" "exact_0.03|--prior exact --var-spike 0.03" \
+              "ss_0.03|--prior ss --var-spike 0.03" "teb_df3|--prior student --t-eb scale --t-df 3 --t-scale 1"; do
+    vn=${spec%%|*}; vargs=${spec#*|}
+    case $vn in exact*) tl=12:00:00 ;; *) tl=3:00:00 ;; esac
+    for init in default planted; do for nz in unit eb oracle; do
+      t=D_${vn}_${init}_${nz}; sub $t $tl "$HDR; $RQ $vargs --init $init --noise $nz --out $R/$t.csv"
+    done; done
+  done ;;
+*) echo "usage: submit_prior.sh T|1|T1|B|E|C|D"; exit 1 ;;
 esac
 echo "submitted: $(grep -vc FAILED $IDS)  failed: $(grep -c FAILED $IDS)"

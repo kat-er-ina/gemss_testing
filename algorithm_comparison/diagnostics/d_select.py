@@ -121,8 +121,11 @@ def fit_arm(X, y, task, arm, D, seed, K, m, n_iter=None, spec=None):
     hp.update(over)
     est, opts = ARMS[arm]
     torch.manual_seed(seed)
-    w = WeightFixGEMSSWrapper(task, est, n_components=K, sparsity=D,
-                              estimator_opts=dict(opts, step_rule="invL", **eb_opts(spec)), exact_sss=exact, **hp)
+    o = dict(opts, step_rule="invL", **eb_opts(spec))
+    if getattr(spec, "noise_opts", None):                  # sec. 50.8: noise variance (fixed oracle or EB)
+        o["noise"] = spec.noise_opts
+    w = WeightFixGEMSSWrapper(task, est, n_components=K, sparsity=D, estimator_opts=o, exact_sss=exact,
+                              init_mu=getattr(spec, "init_mu", None), **hp)
     LAST_WRAPPER = w
     t0 = time.perf_counter()
     sols = w.fit(X, y)
