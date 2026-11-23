@@ -1,6 +1,6 @@
 """Plan sec. 50: the prior as a design choice — semi-synthetic screen (F3J, full-data fits, D in {S, 10}).
 
-Usage: analyze_prior.py <prior dir> <dselect dir> <exact dir> [pilot|stage1|rq1|bench]
+Usage: analyze_prior.py <prior dir> <dselect dir> <exact dir> [pilot|stage1|rq1|bench|diag]
   pilot   Student-t pilot (T_*.csv; diabetes X, S 1/3/5, replicates 1-10) vs the sss estimator (sec. 46 S_* rows) and
           the exact sss (sec. 47 X32_* rows) on the same replicates; applies the reading fixed in sec. 50.
   stage1  stage 1a (P_*.csv, Student-t grid PT_*.csv) plus the two spike-0.1 sss variants from secs. 46-47.
@@ -8,6 +8,7 @@ Usage: analyze_prior.py <prior dir> <dselect dir> <exact dir> [pilot|stage1|rq1|
           default.
   bench   stage 1c (C_*.csv): per design (generator, rank, task, p), the same metrics plus planted found at Jaccard
           >= 0.5 and the share of signal features per solution; paired by seed vs the shipped default.
+  diag    sec. 50.8 (D_*.csv): prior x start x noise; the readings stable / preferred / search vs model failure.
 Variant = prior / spike s.d. (/ df, scale for Student-t). Truth metrics as in d_select.py: sel_recall_proxy (proxy
 recall of the selected solution), share_true_mean, n_sig_full (fully correct near-optimal solutions), nsol.
 Paired differences against the shipped default (sss estimator, spike 0.1): mean, '*' = 95 % CI excludes 0, 'e' = CI
@@ -129,6 +130,28 @@ def bench(pdir, *_):
         print(out.sort_values("planted_recovery", ascending=False).round(3).to_string())
 
 
+def diag(pdir, *_):
+    d = load(pdir, "D_*.csv")
+    d["variant"] = d.apply(label, axis=1)
+    M = ["planted_recovery_raw", "n_planted_found_raw", "planted_recovery", "n_planted_found", "union_f1",
+         "noise_var_final", "oracle_var", "elbo_model"]
+    print(d.groupby(["variant", "init", "noise"])[M].mean().round(3).to_string())
+    print("\n== readings per prior and noise: kept from planted start (raw, >= 0.8, of 3); found from default start;"
+          " objective(planted) - objective(default), paired")
+    for (v, nz), x in d.groupby(["variant", "noise"]):
+        w = x.pivot_table(index="seed", columns="init", values=["n_planted_found_raw", "elbo_model"])
+        kept = w[("n_planted_found_raw", "planted")].mean() if ("n_planted_found_raw", "planted") in w else np.nan
+        found = w[("n_planted_found_raw", "default")].mean() if ("n_planted_found_raw", "default") in w else np.nan
+        dobj = (short(w[("elbo_model", "planted")] - w[("elbo_model", "default")], band=0.0)
+                if v.startswith("t/") is False and ("elbo_model", "planted") in w and ("elbo_model", "default") in w
+                else "n/a (EB-scale t)")
+        stable = kept >= 2
+        pref = dobj.endswith("*") and dobj.startswith("+")
+        verdict = ("search failure" if stable and pref and found < 0.5 else
+                   "model failure" if not stable or (not dobj.startswith("n/a") and not pref) else "stable; preference n/a")
+        print(f"  {v:22s} {nz:6s} kept {kept:.2f}  found {found:.2f}  d_objective {dobj:>12s}  -> {verdict}")
+
+
 if __name__ == "__main__":
     mode = sys.argv[4] if len(sys.argv) > 4 else "pilot"
-    {"pilot": pilot, "stage1": stage1, "rq1": rq1, "bench": bench}[mode](sys.argv[1], sys.argv[2], sys.argv[3])
+    {"pilot": pilot, "stage1": stage1, "rq1": rq1, "bench": bench, "diag": diag}[mode](sys.argv[1], sys.argv[2], sys.argv[3])
