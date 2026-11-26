@@ -322,7 +322,9 @@ class WeightFixRunner:
         # value, gradient, curvature and the 1/L bound, so a noise variance is a weight. 'fixed': sigma^2 = var (an
         # oracle in diagnostics); 'eb': empirical Bayes, the closed-form M-step sigma^2 = E_q ||y - X z||^2 / N,
         # smoothed (sigma^2 <- (1 - rho) sigma^2 + rho * estimate), started at `start` (GEMSS's 1), so the likelihood
-        # sharpens as the fit improves. Regression only.
+        # sharpens as the fit improves. 'temper' (plan sec. 50.10): a fixed geometric path sigma^2(t) =
+        # start * (var / start) ** (t / T) for t < T, then var -- likelihood tempering from GEMSS's unit noise towards
+        # an externally estimated noise variance (the endpoint is not taken from the fit). Regression only.
         self.noise = None
         if noise:
             if not isinstance(target, RegressionTarget) or isinstance(target, LogisticTarget):
@@ -332,13 +334,28 @@ class WeightFixRunner:
             if estimator not in ("ngvi", "ngvi_dec"):
                 raise ValueError("noise is implemented for ngvi / ngvi_dec")
             mode = noise.get("mode", "eb")
+            if mode not in ("fixed", "eb", "temper"):
+                raise ValueError(f"unknown noise mode {mode}")
             v0 = float(noise["var"]) if mode == "fixed" else float(noise.get("start", 1.0))
             self.noise = dict(mode=mode, rho=float(noise.get("rho", 0.01)), vmin=float(noise.get("var_min", 1e-4)),
                               vmax=float(noise.get("var_max", 100.0)), every=int(noise.get("hist_every", 100)),
                               N=int(target.y.shape[0]))
+            if mode == "temper":
+                self.noise.update(start=v0, end=float(noise["var"]), T=int(noise.get("T", 4000)))
             self.noise_var = v0
             target.omega = 1.0 / v0
             self.noise_hist: List[tuple] = [(0, v0)]
+
+    def noise_at(self, t: int) -> float:
+        nz = self.noise
+        return nz["end"] if t >= nz["T"] else float(nz["start"] * (nz["end"] / nz["start"]) ** (t / nz["T"]))
+
+    def _noise_temper(self, t: int):
+        """Tempering path (sec. 50.10): set sigma^2(t) and omega = 1 / sigma^2 before the step at time t."""
+        self.noise_var = self.noise_at(t)
+        self.target.omega = 1.0 / self.noise_var
+        if t > 0 and t % self.noise["every"] == 0:
+            self.noise_hist.append((t, self.noise_var))
 
     def _noise_step(self, wk):
         """Empirical-Bayes noise variance from the draws of this step (target.last_rss), then omega = 1 / sigma^2."""
@@ -556,6 +573,8 @@ class WeightFixRunner:
                 self.target.omega = self.omega_at(self.t)
             if self.spike_path:
                 self.sel.prior.var_spike = self.spike_at(self.t)
+            if self.noise is not None and self.noise["mode"] == "temper":
+                self._noise_temper(self.t)
             if self.est in ("current", "frozen"):
                 hist.append(self._step_generic_current())
             elif self.est == "strat":
@@ -579,6 +598,8 @@ class WeightFixRunner:
             self.target.omega = self.omega_at(self.t)
         if self.spike_path:
             self.sel.prior.var_spike = self.spike_at(self.t)
+        if self.noise is not None and self.noise["mode"] == "temper":
+            self._noise_temper(self.t)
         self.sync()
         return hist
 

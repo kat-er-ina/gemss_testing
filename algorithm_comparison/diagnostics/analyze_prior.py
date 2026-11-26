@@ -152,6 +152,45 @@ def diag(pdir, *_):
         print(f"  {v:22s} {nz:6s} kept {kept:.2f}  found {found:.2f}  d_objective {dobj:>12s}  -> {verdict}")
 
 
+def temper(pdir, *_):
+    """Sec. 50.10: random start, distinct design; F_* (lasso, temper-lasso, temper-oracle) with the D_* default-start
+    partners (unit, oracle = fixed at the oracle). Readings fixed in sec. 50.10 before the results."""
+    f = load(pdir, "F_*.csv")
+    dd = load(pdir, "D_*.csv")
+    dd = dd[(dd.init == "default") & dd.noise.isin(["unit", "oracle"]) & (dd.prior != "mc")]
+    d = pd.concat([dd, f], ignore_index=True)
+    d["variant"] = d.apply(label, axis=1)
+    M = ["n_planted_found_raw", "planted_recovery_raw", "n_planted_found", "union_f1", "noise_var_final", "elbo_model"]
+    order = ["unit", "lasso", "temper-lasso", "oracle", "temper-oracle"]
+    g = d.groupby(["variant", "noise"])[M].mean().round(3)
+    print(g.reindex([(v, n) for v in sorted(set(d.variant)) for n in order if (v, n) in g.index]).to_string())
+    print("\nlasso / oracle noise variance (per seed): median %.2f, range %.2f-%.2f"
+          % tuple(np.percentile(f.lasso_var / f.oracle_var, [50, 0, 100])) if len(f) else "")
+    C = [("endpoint", "lasso", "unit"), ("path", "temper-lasso", "lasso"), ("estimate", "temper-oracle", "temper-lasso"),
+         ("path@oracle", "temper-oracle", "oracle"), ("vs GEMSS", "temper-lasso", "unit")]
+    print("\n== paired differences (seeds), '*' = 95 % CI excludes 0, 'e' = inside +-0.02: found_raw | recovery_raw | union-F1")
+    for v, x in d.groupby("variant"):
+        w = x.pivot_table(index="seed", columns="noise", values=M)
+        for name, a, b in C:
+            if (M[0], a) in w and (M[0], b) in w:
+                cells = [short(w[(m, a)] - w[(m, b)]) for m in ("n_planted_found_raw", "planted_recovery_raw", "union_f1")]
+                print(f"  {v:22s} {name:12s} {a:>13s} - {b:13s} " + "  ".join(f"{c:>8s}" for c in cells))
+    print("\n== reading (sec. 50.10): a practical arm (lasso or temper-lasso) fixes the search if it finds >= 1.0 of 3"
+          " planted solutions (raw, Jaccard >= 0.8) from the random start on average, without losing union-F1 vs unit"
+          " (paired CI lower bound > -0.05)")
+    for v, x in d.groupby("variant"):
+        w = x.pivot_table(index="seed", columns="noise", values=M)
+        for a in ("lasso", "temper-lasso"):
+            if ("n_planted_found_raw", a) not in w or ("union_f1", "unit") not in w:
+                continue
+            fnd = w[("n_planted_found_raw", a)].mean()
+            du = (w[("union_f1", a)] - w[("union_f1", "unit")]).dropna()
+            lo = du.mean() - stats.t.ppf(0.975, len(du) - 1) * du.std(ddof=1) / np.sqrt(len(du))
+            ok = fnd >= 1.0 and lo > -0.05
+            print(f"  {v:22s} {a:13s} found {fnd:.2f}  union-F1 vs unit {du.mean():+.3f} (lower {lo:+.3f})"
+                  f" -> {'FIXES the search' if ok else 'no fix'}")
+
+
 if __name__ == "__main__":
     mode = sys.argv[4] if len(sys.argv) > 4 else "pilot"
-    {"pilot": pilot, "stage1": stage1, "rq1": rq1, "bench": bench, "diag": diag}[mode](sys.argv[1], sys.argv[2], sys.argv[3])
+    {"pilot": pilot, "stage1": stage1, "rq1": rq1, "bench": bench, "diag": diag, "temper": temper}[mode](sys.argv[1], sys.argv[2], sys.argv[3])

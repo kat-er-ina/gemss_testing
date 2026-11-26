@@ -25,6 +25,12 @@ Sec. 50.8 (diagnosing why planted solutions are not recovered) adds
                            OLS coefficients on the solution's features, 0 elsewhere)
   and records the raw components' match (planted_recovery_raw, n_planted_found_raw), the final noise variance and
   the run's objective under the fitted model (elbo_model, comparable across starts and noise variances).
+
+Sec. 50.10 (likelihood tempering towards an external noise estimate) adds
+  --noise lasso            fixed at the CV-lasso estimate sigma2_lasso = RSS / (n - df) (LassoCV, 5 folds, on X, y;
+                           computed and recorded for every run as lasso_var)
+  --noise temper-lasso     sigma^2 moved geometrically from 1 (GEMSS) to sigma2_lasso over the first --temper-T steps
+  --noise temper-oracle    the same path to the oracle (ceiling)
 """
 import argparse, os, sys, time
 import numpy as np, pandas as pd, torch
@@ -37,7 +43,7 @@ from src.hard_data_factory import (generate_overlapping_dataset, generate_overla
                                    generate_distinct_solutions)
 from src.evaluation import calculate_metrics            # noqa: E402
 from ensemble_parity import cluster_supports            # noqa: E402
-from sklearn.linear_model import LinearRegression       # noqa: E402
+from sklearn.linear_model import LinearRegression, LassoCV  # noqa: E402
 
 D, M, K = 10, 3, 12
 
@@ -75,7 +81,9 @@ def main():
     ap.add_argument("--binarize", action="store_true")
     ap.add_argument("--n", type=int, default=100)
     ap.add_argument("--p", type=int, default=200)
-    ap.add_argument("--noise", choices=["unit", "eb", "oracle"], default="unit")
+    ap.add_argument("--noise", choices=["unit", "eb", "oracle", "lasso", "temper-lasso", "temper-oracle"],
+                    default="unit")
+    ap.add_argument("--temper-T", dest="temper_T", type=int, default=4000)
     ap.add_argument("--init", choices=["default", "planted"], default="default")
     ap.add_argument("--seeds", type=int, nargs="+", default=list(range(1, 26)))
     ap.add_argument("--n-iter", dest="n_iter", type=int, default=None)
@@ -91,8 +99,12 @@ def main():
         pl = [list(v) for v in (planted.values() if isinstance(planted, dict) else planted)]
         ols = [LinearRegression(fit_intercept=False).fit(X[:, b], y) for b in pl]
         oracle = float(np.mean([np.mean((y - m.predict(X[:, b])) ** 2) for m, b in zip(ols, pl)]))
-        a.noise_opts = (None if a.noise == "unit" else dict(mode="eb", start=1.0) if a.noise == "eb"
-                        else dict(mode="fixed", var=oracle))
+        las = LassoCV(cv=5, random_state=seed, max_iter=20000).fit(X, y)
+        lasso_var = float(((y - las.predict(X)) ** 2).sum()) / max(len(y) - int((las.coef_ != 0).sum()), 1)
+        a.noise_opts = {"unit": None, "eb": dict(mode="eb", start=1.0), "oracle": dict(mode="fixed", var=oracle),
+                        "lasso": dict(mode="fixed", var=lasso_var),
+                        "temper-lasso": dict(mode="temper", start=1.0, var=lasso_var, T=a.temper_T),
+                        "temper-oracle": dict(mode="temper", start=1.0, var=oracle, T=a.temper_T)}[a.noise]
         a.init_mu = None
         if a.init == "planted":
             mu = np.zeros((K, P))
@@ -114,8 +126,9 @@ def main():
                          generator=a.generator, rank=a.rank, task=task, n=X.shape[0], p=P,
                          union_f1=uf, planted_recovery=float(np.mean(best)), n_planted_found=int(sum(b >= 0.8 for b in best)),
                          n_planted_found50=int(sum(b >= 0.5 for b in best)),
-                         noise=a.noise, init=a.init, oracle_var=oracle,
-                         noise_var_final=(nh[-1][1] if nh else (oracle if a.noise == "oracle" else 1.0)),
+                         noise=a.noise, init=a.init, oracle_var=oracle, lasso_var=lasso_var,
+                         temper_T=a.temper_T if a.noise.startswith("temper") else None,
+                         noise_var_final=(nh[-1][1] if nh else (a.noise_opts or {}).get("var", 1.0)),
                          elbo_model=getattr(W, "elbo_model_", np.nan),
                          planted_recovery_raw=float(np.mean(best_raw)),
                          n_planted_found_raw=int(sum(b >= 0.8 for b in best_raw)),

@@ -15,7 +15,11 @@
 #       df 3 scale 0.01, EB-scale Student-t df 3 (start 1), ss 0.03
 #   D   sec. 50.8 diagnosis (user 2026-11-23: "investigate 2"): distinct design, 4 priors (estimator 0.03, exact 0.03,
 #       ss 0.03, EB-scale Student-t) x start {default, planted} x noise {unit, eb, oracle}, seeds 1-25
-# Usage: submit_prior.sh T|1|T1|B|E|C|D   (submits only). Results: ~/amvi_compare/results/prior/
+#   F   sec. 50.10 likelihood tempering towards an external noise estimate (user 2026-11-26: "go"): distinct design,
+#       random start, 3 priors (exact 0.03, ss 0.03, EB-scale Student-t) x noise {lasso (fixed at the CV-lasso
+#       estimate), temper-lasso (1 -> CV-lasso over 4000 of 6000 steps), temper-oracle (ceiling)}, seeds 1-25; the
+#       unit and fixed-oracle partners are the D jobs
+# Usage: submit_prior.sh T|1|T1|B|E|C|D|F   (submits only). Results: ~/amvi_compare/results/prior/
 set -u
 BASE=$HOME/amvi_compare
 G=$BASE/gemss_testing/algorithm_comparison
@@ -101,6 +105,16 @@ D)
       t=D_${vn}_${init}_${nz}; sub $t $tl "$HDR; $RQ $vargs --init $init --noise $nz --out $R/$t.csv"
     done; done
   done ;;
-*) echo "usage: submit_prior.sh T|1|T1|B|E|C|D"; exit 1 ;;
+F)
+  RQ="../.venv/bin/python diagnostics/prior_rq1.py --generator distinct --init default --temper-T 4000 --seeds $(seq -s ' ' 1 25)"
+  for spec in "exact_0.03|--prior exact --var-spike 0.03" "ss_0.03|--prior ss --var-spike 0.03" \
+              "teb_df3|--prior student --t-eb scale --t-df 3 --t-scale 1"; do
+    vn=${spec%%|*}; vargs=${spec#*|}
+    case $vn in exact*) tl=12:00:00 ;; *) tl=3:00:00 ;; esac
+    for nz in lasso temper-lasso temper-oracle; do
+      t=F_${vn}_${nz}; sub $t $tl "$HDR; $RQ $vargs --noise $nz --out $R/$t.csv"
+    done
+  done ;;
+*) echo "usage: submit_prior.sh T|1|T1|B|E|C|D|F"; exit 1 ;;
 esac
 echo "submitted: $(grep -vc FAILED $IDS)  failed: $(grep -c FAILED $IDS)"
